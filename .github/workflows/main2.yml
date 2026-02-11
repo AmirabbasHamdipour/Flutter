@@ -28,8 +28,8 @@ jobs:
           flutter-version: '3.x'
           channel: stable
           cache: true
-          cache-key: flutter-:os:-:channel:-:version:-:arch:
-          pub-cache-key: flutter-pub:os:-:channel:-:version:-:arch:
+          cache-key: 'flutter-:os:-:channel:-:version:-:arch:'   # ✅ کوتیشن اضافه شد
+          pub-cache-key: 'flutter-pub:os:-:channel:-:version:-:arch:' # ✅ کوتیشن اضافه شد
 
       # 3) Check if project exists, create if not
       - name: Check or create Flutter project
@@ -74,7 +74,6 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    # Only run on push to main (not on pull requests) OR when manually triggered
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     
     steps:
@@ -84,14 +83,17 @@ jobs:
         with:
           name: flutter-app-release-apk
 
-      # 2) Setup version
+      # 2) Rename APK for release
+      - name: Rename APK
+        run: mv app-release.apk flutter-app-release.apk
+
+      # 3) Setup version
       - name: Setup version
         id: version
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             VERSION="${{ github.event.inputs.release_version }}"
           else
-            # Get version from pubspec.yaml if exists, else use timestamp
             if [ -f "pubspec.yaml" ]; then
               VERSION=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}' | sed 's/+.*//')
             else
@@ -101,11 +103,11 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 
-      # 3) Create Release
+      # 4) Create Release
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: app-release.apk
+          files: flutter-app-release.apk
           tag_name: ${{ steps.version.outputs.tag }}
           name: Flutter Release ${{ steps.version.outputs.tag }}
           draft: false
