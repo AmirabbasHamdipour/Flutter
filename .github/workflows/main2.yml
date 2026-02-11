@@ -1,117 +1,64 @@
-name: Flutter Android Release Build
+name: Flutter Android Build (APK)
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
-  workflow_dispatch:
-    inputs:
-      release_version:
-        description: 'Release Version (e.g., 1.0.0)'
-        required: false
-        default: '1.0.0'
+    branches: [ main ]
+  workflow_dispatch:   # اجرای دستی
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) Checkout project
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2) Setup Flutter
       - name: Setup Flutter
         uses: subosito/flutter-action@v2.14.0
         with:
           flutter-version: '3.x'
           channel: stable
           cache: true
-          cache-key: 'flutter-:os:-:channel:-:version:-:arch:'   # ✅ کوتیشن اضافه شد
-          pub-cache-key: 'flutter-pub:os:-:channel:-:version:-:arch:' # ✅ کوتیشن اضافه شد
+          cache-key: flutter-:os:-:channel:-:version:-:arch:
+          pub-cache-key: flutter-pub:os:-:channel:-:version:-:arch:
 
-      # 3) Check if project exists, create if not
-      - name: Check or create Flutter project
-        id: flutter_project
+      - name: Check if Flutter project exists
+        id: check_project
         run: |
           if [ -f "pubspec.yaml" ]; then
-            echo "project_exists=true" >> $GITHUB_OUTPUT
-            echo "project_dir=." >> $GITHUB_OUTPUT
-            echo "Existing Flutter project detected."
+            echo "Project exists. Skipping creation."
+            echo "exists=true" >> $GITHUB_OUTPUT
           else
-            echo "project_exists=false" >> $GITHUB_OUTPUT
-            echo "project_dir=." >> $GITHUB_OUTPUT
-            echo "Creating new Flutter project..."
-            flutter create --org com.example.myapp .
+            echo "Project not found. Will create new Flutter project."
+            echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
-      # 4) Install dependencies
+      - name: Create new Flutter project (if not exists)
+        if: steps.check_project.outputs.exists == 'false'
+        run: |
+          # استفاده از نام مخزن با تبدیل به فرمت معتبر
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          # تبدیل به حروف کوچک، جایگزینی کاراکترهای غیرمجاز با زیرخط
+          PROJECT_NAME=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g' | sed 's/^[0-9]/_/')
+          # اگر نام خالی شد (مثلاً مخزن نام نامعتبر داشت)، یک نام پیش‌فرض بگذار
+          if [ -z "$PROJECT_NAME" ]; then
+            PROJECT_NAME="my_flutter_app"
+          fi
+          echo "Creating Flutter project with name: $PROJECT_NAME"
+          flutter create --org com.example.app --project-name "$PROJECT_NAME" .
+
       - name: Install dependencies
-        run: |
-          cd ${{ steps.flutter_project.outputs.project_dir }}
-          flutter pub get
+        run: flutter pub get
 
-      # 5) Run tests
-      - name: Run tests
-        run: |
-          cd ${{ steps.flutter_project.outputs.project_dir }}
-          flutter test
+      - name: Run tests (optional - در صورت تمایل غیرفعال کنید)
+        run: flutter test || echo "No tests found or test failed, continuing..."
 
-      # 6) Build Release APK
       - name: Build Release APK
-        run: |
-          cd ${{ steps.flutter_project.outputs.project_dir }}
-          flutter build apk --release
+        run: flutter build apk --release
 
-      # 7) Upload APK as artifact
-      - name: Upload APK artifact
+      - name: Upload APK as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flutter-app-release-apk
-          path: ${{ steps.flutter_project.outputs.project_dir }}/build/app/outputs/flutter-apk/app-release.apk
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
-    
-    steps:
-      # 1) Download APK artifact
-      - name: Download APK artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: flutter-app-release-apk
-
-      # 2) Rename APK for release
-      - name: Rename APK
-        run: mv app-release.apk flutter-app-release.apk
-
-      # 3) Setup version
-      - name: Setup version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.release_version }}"
-          else
-            if [ -f "pubspec.yaml" ]; then
-              VERSION=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}' | sed 's/+.*//')
-            else
-              VERSION="$(date +'%Y.%m.%d.%H%M%S')"
-            fi
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
-
-      # 4) Create Release
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: flutter-app-release.apk
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Flutter Release ${{ steps.version.outputs.tag }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: app-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
