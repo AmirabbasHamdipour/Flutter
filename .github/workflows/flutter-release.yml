@@ -24,28 +24,60 @@ jobs:
           cache: true
           architecture: x64
 
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Create new Flutter project (if not exists)
+      - name: Check if Flutter project exists
+        id: check_project
         run: |
-          if [ ! -f "pubspec.yaml" ]; then
-            echo "Creating new Flutter project..."
-            flutter create --org com.example.myapp .
+          if [ -f "pubspec.yaml" ]; then
+            echo "PROJECT_EXISTS=true" >> $GITHUB_OUTPUT
+            echo "PROJECT_DIR=." >> $GITHUB_OUTPUT
           else
-            echo "Existing Flutter project detected."
+            echo "PROJECT_EXISTS=false" >> $GITHUB_OUTPUT
+            echo "PROJECT_DIR=app" >> $GITHUB_OUTPUT
           fi
 
+      - name: Create new Flutter project (if not exists)
+        if: steps.check_project.outputs.PROJECT_EXISTS == 'false'
+        run: |
+          echo "Creating new Flutter project..."
+          flutter create --org com.example.myapp app
+          echo "Flutter project created successfully in 'app' directory."
+
+      - name: Change to project directory
+        run: |
+          cd ${{ steps.check_project.outputs.PROJECT_DIR }}
+          echo "Current directory: $(pwd)"
+          echo "Files in directory:"
+          ls -la
+
+      - name: Install dependencies
+        run: |
+          cd ${{ steps.check_project.outputs.PROJECT_DIR }}
+          flutter pub get
+
       - name: Run tests
-        run: flutter test
+        run: |
+          cd ${{ steps.check_project.outputs.PROJECT_DIR }}
+          flutter test
 
       - name: Build APK
-        run: flutter build apk --release
+        run: |
+          cd ${{ steps.check_project.outputs.PROJECT_DIR }}
+          flutter build apk --release
+
+      - name: Prepare APK for release
+        run: |
+          if [ "${{ steps.check_project.outputs.PROJECT_DIR }}" = "app" ]; then
+            cp app/build/app/outputs/flutter-apk/app-release.apk ./app-release.apk
+          else
+            cp build/app/outputs/flutter-apk/app-release.apk ./app-release.apk
+          fi
+          echo "APK file prepared:"
+          ls -lh *.apk
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: app-release.apk
           tag_name: v${{ github.event.inputs.release_version }}
           name: Release v${{ github.event.inputs.release_version }}
           draft: false
