@@ -1,5 +1,3 @@
-// main.dart – کاملترین اپلیکیشن Reels با تمام امکانات و کتابخانه‌های حرفه‌ای
-
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -15,95 +13,14 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 // ------------------------------------------------------------
 // تنظیمات ثابت
 // ------------------------------------------------------------
 const String BASE_URL = 'https://tweeter.runflare.run';
-const int CONNECT_TIMEOUT = 30000;
-const int RECEIVE_TIMEOUT = 30000;
 
 // ------------------------------------------------------------
-// سرویس API با Dio (پشتیبانی کامل از کوکی، آپلود، دانلود)
-// ------------------------------------------------------------
-class ApiService {
-  static final ApiService _instance = ApiService._internal();
-  factory ApiService() => _instance;
-  ApiService._internal();
-
-  final Dio _dio = Dio(BaseOptions(
-    baseUrl: BASE_URL,
-    connectTimeout: Duration(milliseconds: CONNECT_TIMEOUT),
-    receiveTimeout: Duration(milliseconds: RECEIVE_TIMEOUT),
-    headers: {'Accept': 'application/json'},
-  ));
-
-  bool _isCookieSet = false;
-
-  Future<void> _initCookieJar() async {
-    if (!_isCookieSet) {
-      _dio.interceptors.add(CookieManager());
-      _isCookieSet = true;
-    }
-  }
-
-  Future<Response> get(String path) async {
-    await _initCookieJar();
-    try {
-      return await _dio.get(path);
-    } on DioException catch (e) {
-      throw _handleError(e);
-    }
-  }
-
-  Future<Response> postForm(String path, {Map<String, dynamic>? data, List<MultipartFile>? files}) async {
-    await _initCookieJar();
-    try {
-      final formData = FormData();
-      if (data != null) {
-        data.forEach((key, value) {
-          if (value != null) formData.fields.add(MapEntry(key, value.toString()));
-        });
-      }
-      if (files != null) {
-        for (var file in files) {
-          formData.files.add(MapEntry(
-            file.field,
-            MultipartFile.fromBytes(file.bytes, filename: file.filename),
-          ));
-        }
-      }
-      return await _dio.post(path, data: formData);
-    } on DioException catch (e) {
-      throw _handleError(e);
-    }
-  }
-
-  Future<Response> post(String path, {Map<String, dynamic>? data}) async {
-    await _initCookieJar();
-    try {
-      return await _dio.post(path, data: data);
-    } on DioException catch (e) {
-      throw _handleError(e);
-    }
-  }
-
-  String _handleError(DioException e) {
-    if (e.response != null) {
-      return e.response?.data?['error'] ?? 'خطای سرور';
-    }
-    return 'عدم ارتباط با سرور';
-  }
-
-  void clearCookies() {
-    _dio.interceptors.clear();
-    _isCookieSet = false;
-  }
-}
-
-// ------------------------------------------------------------
-// مدیریت کش ویدیو با CacheManager سفارشی
+// کش ویدیو با CacheManager
 // ------------------------------------------------------------
 class VideoCacheManager {
   static const key = 'video_cache';
@@ -127,7 +44,111 @@ class VideoCacheManager {
 }
 
 // ------------------------------------------------------------
-// مدل‌های داده (مشابه قبل با کمی بهبود)
+// سرویس API با Dio و مدیریت کوکی
+// ------------------------------------------------------------
+class ApiService {
+  static final ApiService _instance = ApiService._internal();
+  factory ApiService() => _instance;
+  ApiService._internal();
+
+  final Dio _dio = Dio(BaseOptions(
+    baseUrl: BASE_URL,
+    connectTimeout: const Duration(seconds: 30),
+    receiveTimeout: const Duration(seconds: 30),
+    headers: {'Accept': 'application/json'},
+  ));
+
+  bool _cookieInterceptorAdded = false;
+
+  Future<void> _ensureCookieInterceptor() async {
+    if (!_cookieInterceptorAdded) {
+      _dio.interceptors.add(CookieManager());
+      _cookieInterceptorAdded = true;
+    }
+  }
+
+  Future<Response> get(String path) async {
+    await _ensureCookieInterceptor();
+    try {
+      return await _dio.get(path);
+    } on DioException catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  /// ارسال فرم با پشتیبانی از فیلدها و فایل‌های Multipart
+  Future<Response> postForm(
+    String path, {
+    Map<String, dynamic>? data,
+    Map<String, MultipartFile>? files,
+  }) async {
+    await _ensureCookieInterceptor();
+    try {
+      final formData = FormData();
+      if (data != null) {
+        data.forEach((key, value) {
+          if (value != null) formData.fields.add(MapEntry(key, value.toString()));
+        });
+      }
+      if (files != null) {
+        files.forEach((key, file) {
+          formData.files.add(MapEntry(key, file));
+        });
+      }
+      return await _dio.post(path, data: formData);
+    } on DioException catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  String _handleError(DioException e) {
+    if (e.response != null) {
+      return e.response?.data?['error'] ?? 'خطای سرور';
+    }
+    return 'عدم ارتباط با سرور';
+  }
+
+  void clearCookies() {
+    _dio.interceptors.clear();
+    _cookieInterceptorAdded = false;
+  }
+}
+
+// ------------------------------------------------------------
+// اینترسپتور ساده برای مدیریت کوکی
+// ------------------------------------------------------------
+class CookieManager extends Interceptor {
+  final Map<String, String> _cookies = {};
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    if (_cookies.isNotEmpty) {
+      options.headers['Cookie'] = _cookies.entries.map((e) => '${e.key}=${e.value}').join('; ');
+    }
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    final cookies = response.headers['set-cookie'];
+    if (cookies != null) {
+      for (var cookieStr in cookies) {
+        cookieStr.split(',').forEach((c) {
+          final parts = c.trim().split(';')[0].split('=');
+          if (parts.length == 2) {
+            _cookies[parts[0]] = parts[1];
+          }
+        });
+      }
+    }
+    handler.next(response);
+  }
+
+  void clear() => _cookies.clear();
+}
+
+// ------------------------------------------------------------
+// مدل‌های داده
 // ------------------------------------------------------------
 class User {
   final int id;
@@ -282,10 +303,11 @@ class Message {
 }
 
 // ------------------------------------------------------------
-// State مدیریت مرکزی اپلیکیشن (ChangeNotifier + Provider)
+// مدیریت State مرکزی (Provider)
 // ------------------------------------------------------------
 class AppState extends ChangeNotifier {
   final ApiService _api = ApiService();
+  final ImagePicker _imagePicker = ImagePicker();
 
   User? currentUser;
   List<Reel> feed = [];
@@ -295,12 +317,9 @@ class AppState extends ChangeNotifier {
   bool isLoading = false;
   String? error;
 
-  // انتخاب فایل با ImagePicker
-  final ImagePicker _imagePicker = ImagePicker();
-
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   // احراز هویت
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   Future<bool> login(String username, String password, bool remember) async {
     try {
       isLoading = true;
@@ -314,7 +333,6 @@ class AppState extends ChangeNotifier {
       });
 
       if (response.data['success'] == true) {
-        await fetchCurrentUser();
         isLoading = false;
         notifyListeners();
         return true;
@@ -332,8 +350,12 @@ class AppState extends ChangeNotifier {
   }
 
   Future<bool> register(
-      String username, String email, String password, String fullName,
-      {bool remember = false}) async {
+    String username,
+    String email,
+    String password,
+    String fullName, {
+    bool remember = false,
+  }) async {
     try {
       isLoading = true;
       error = null;
@@ -348,7 +370,6 @@ class AppState extends ChangeNotifier {
       });
 
       if (response.data['success'] == true) {
-        await fetchCurrentUser();
         isLoading = false;
         notifyListeners();
         return true;
@@ -379,19 +400,60 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> fetchCurrentUser() async {
-    // برای دمو: با یوزرنیم از session? راه‌حل بهتر ذخیره یوزرنیم در حافظه است.
-    // اینجا فعلاً فرض می‌کنیم بعد از لاگین نیازی به فراخوانی نداریم.
-  }
-
+  // ------------------------------------------------------------
+  // پروفایل کاربر فعلی
+  // ------------------------------------------------------------
   void setCurrentUser(User user) {
     currentUser = user;
     notifyListeners();
   }
 
-  // --------------------------------------------------------
+  Future<User?> getProfile(String username) async {
+    try {
+      final response = await _api.get('/profile/$username');
+      return User.fromJson(response.data);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> updateProfile({
+    String? fullName,
+    String? bio,
+    XFile? profilePicFile,
+  }) async {
+    try {
+      isLoading = true;
+      notifyListeners();
+
+      final data = <String, dynamic>{};
+      if (fullName != null) data['full_name'] = fullName;
+      if (bio != null) data['bio'] = bio;
+
+      Map<String, MultipartFile>? files;
+      if (profilePicFile != null) {
+        final bytes = await profilePicFile.readAsBytes();
+        files = {
+          'profile_pic': MultipartFile.fromBytes(bytes, filename: profilePicFile.name),
+        };
+      }
+
+      await _api.postForm('/profile/update', data: data, files: files);
+      if (currentUser != null) {
+        final updated = await getProfile(currentUser!.username);
+        if (updated != null) currentUser = updated;
+      }
+    } catch (e) {
+      error = e.toString();
+    } finally {
+      isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // ------------------------------------------------------------
   // ریلز
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   Future<void> fetchFeed() async {
     try {
       isLoading = true;
@@ -440,9 +502,6 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  // --------------------------------------------------------
-  // آپلود ریلز (انتخاب فایل واقعی)
-  // --------------------------------------------------------
   Future<void> createReel(XFile mediaFile, String caption, String music) async {
     try {
       isLoading = true;
@@ -450,16 +509,13 @@ class AppState extends ChangeNotifier {
 
       final bytes = await mediaFile.readAsBytes();
       final multipartFile = MultipartFile.fromBytes(bytes, filename: mediaFile.name);
-      final response = await _api.postForm('/reel/create', data: {
+      final files = {'media': multipartFile};
+
+      await _api.postForm('/reel/create', data: {
         'caption': caption,
         'music': music,
-      }, files: [
-        MultipartFileField('media', multipartFile),
-      ]);
-
-      if (response.statusCode == 200) {
-        await fetchFeed();
-      }
+      }, files: files);
+      await fetchFeed();
     } catch (e) {
       error = e.toString();
     } finally {
@@ -468,9 +524,9 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   // کامنت‌ها
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   Future<List<Comment>> fetchComments(int reelId) async {
     try {
       final response = await _api.get('/reel/$reelId/comments');
@@ -478,7 +534,7 @@ class AppState extends ChangeNotifier {
       commentCache[reelId] = comments;
       notifyListeners();
       return comments;
-    } catch (e) {
+    } catch (_) {
       return [];
     }
   }
@@ -493,7 +549,6 @@ class AppState extends ChangeNotifier {
         if (commentCache.containsKey(reelId)) {
           commentCache[reelId]!.insert(0, newComment);
         }
-        // افزایش شمارنده کامنت ریل
         final index = feed.indexWhere((r) => r.id == reelId);
         if (index != -1) {
           final reel = feed[index];
@@ -528,51 +583,9 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  // --------------------------------------------------------
-  // پروفایل و دنبال کردن
-  // --------------------------------------------------------
-  Future<User?> getProfile(String username) async {
-    try {
-      final response = await _api.get('/profile/$username');
-      return User.fromJson(response.data);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> updateProfile(
-      {String? fullName, String? bio, XFile? profilePicFile}) async {
-    try {
-      isLoading = true;
-      notifyListeners();
-
-      final data = <String, dynamic>{};
-      if (fullName != null) data['full_name'] = fullName;
-      if (bio != null) data['bio'] = bio;
-
-      List<MultipartFileField>? files;
-      if (profilePicFile != null) {
-        final bytes = await profilePicFile.readAsBytes();
-        files = [
-          MultipartFileField('profile_pic',
-              MultipartFile.fromBytes(bytes, filename: profilePicFile.name))
-        ];
-      }
-
-      await _api.postForm('/profile/update', data: data, files: files);
-      // رفرش پروفایل
-      if (currentUser != null) {
-        final updated = await getProfile(currentUser!.username);
-        if (updated != null) currentUser = updated;
-      }
-    } catch (e) {
-      error = e.toString();
-    } finally {
-      isLoading = false;
-      notifyListeners();
-    }
-  }
-
+  // ------------------------------------------------------------
+  // دنبال کردن
+  // ------------------------------------------------------------
   Future<bool> toggleFollow(int userId) async {
     try {
       final response = await _api.postForm('/follow/$userId');
@@ -582,9 +595,9 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   // پیام خصوصی
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   Future<void> fetchDMUsers() async {
     try {
       final response = await _api.get('/dm/users');
@@ -598,7 +611,7 @@ class AppState extends ChangeNotifier {
       final response = await _api.get('/dm/$otherUserId');
       final messages = (response.data as List).map((e) => Message.fromJson(e)).toList();
       messageCache[otherUserId] = messages;
-      await fetchDMUsers(); // برای آپدیت unread count
+      await fetchDMUsers();
       notifyListeners();
       return messages;
     } catch (_) {
@@ -611,13 +624,12 @@ class AppState extends ChangeNotifier {
       final data = {'receiver_id': receiverId.toString()};
       if (text.isNotEmpty) data['content'] = text;
 
-      List<MultipartFileField>? files;
+      Map<String, MultipartFile>? files;
       if (file != null) {
         final bytes = file.bytes ?? await File(file.path!).readAsBytes();
-        files = [
-          MultipartFileField('media',
-              MultipartFile.fromBytes(bytes, filename: file.name))
-        ];
+        files = {
+          'media': MultipartFile.fromBytes(bytes, filename: file.name),
+        };
       }
 
       await _api.postForm('/dm/send', data: data, files: files);
@@ -635,9 +647,9 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   // ادمین
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   Future<List<User>> fetchAllUsersForAdmin() async {
     try {
       final response = await _api.get('/admin/bluetik/users');
@@ -649,17 +661,16 @@ class AppState extends ChangeNotifier {
 
   Future<bool> toggleBlueTick(int userId) async {
     try {
-      final response =
-          await _api.postForm('/admin/bluetik/toggle', data: {'user_id': userId.toString()});
+      final response = await _api.postForm('/admin/bluetik/toggle', data: {'user_id': userId.toString()});
       return response.data['blue_tick'] == true;
     } catch (_) {
       return false;
     }
   }
 
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   // ابزارهای انتخاب فایل
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
   Future<XFile?> pickImage({bool fromCamera = false}) async {
     final source = fromCamera ? ImageSource.camera : ImageSource.gallery;
     return await _imagePicker.pickImage(source: source);
@@ -676,49 +687,7 @@ class AppState extends ChangeNotifier {
 }
 
 // ------------------------------------------------------------
-// کلاس کمکی برای ارسال فایل در Dio
-// ------------------------------------------------------------
-class MultipartFileField {
-  final String key;
-  final MultipartFile file;
-  MultipartFileField(this.key, this.file);
-}
-
-// ------------------------------------------------------------
-// کوکی منیجر ساده برای Dio
-// ------------------------------------------------------------
-class CookieManager extends Interceptor {
-  final Map<String, String> _cookies = {};
-
-  @override
-  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    if (_cookies.isNotEmpty) {
-      options.headers['Cookie'] = _cookies.entries.map((e) => '${e.key}=${e.value}').join('; ');
-    }
-    handler.next(options);
-  }
-
-  @override
-  void onResponse(Response response, ResponseInterceptorHandler handler) {
-    if (response.headers.map.containsKey('set-cookie')) {
-      final cookies = response.headers['set-cookie'];
-      for (var cookieStr in cookies) {
-        cookieStr.split(',').forEach((c) {
-          final parts = c.trim().split(';')[0].split('=');
-          if (parts.length == 2) {
-            _cookies[parts[0]] = parts[1];
-          }
-        });
-      }
-    }
-    handler.next(response);
-  }
-
-  void clear() => _cookies.clear();
-}
-
-// ------------------------------------------------------------
-// ویجت پخش ویدیو با کش (VideoPlayer + CacheManager)
+// ویجت پخش ویدیو با کش
 // ------------------------------------------------------------
 class CachedVideoPlayer extends StatefulWidget {
   final String videoUrl;
@@ -754,18 +723,14 @@ class _CachedVideoPlayerState extends State<CachedVideoPlayer> {
       final file = await VideoCacheManager.getVideoFile(widget.videoUrl);
       _controller = VideoPlayerController.file(file);
       await _controller!.initialize();
-      if (widget.autoPlay) {
-        _controller!.play();
-      }
-      if (widget.looping) {
-        _controller!.setLooping(true);
-      }
+      if (widget.autoPlay) _controller!.play();
+      if (widget.looping) _controller!.setLooping(true);
       setState(() {
         _isInitialized = true;
         _isLoading = false;
       });
     } catch (e) {
-      // fallback به استریم مستقیم
+      // Fallback به استریم مستقیم
       try {
         _controller = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
         await _controller!.initialize();
@@ -832,7 +797,7 @@ class _CachedVideoPlayerState extends State<CachedVideoPlayer> {
 }
 
 // ------------------------------------------------------------
-// ویجت کش شده برای تصاویر پروفایل و ریلز
+// ویجت تصویر پروفایل کش‌شده
 // ------------------------------------------------------------
 class CachedProfileImage extends StatelessWidget {
   final String? imageUrl;
@@ -851,12 +816,8 @@ class CachedProfileImage extends StatelessWidget {
     final url = imageUrl != null ? '$BASE_URL/media/${imageUrl!.split('/').last}' : null;
     final child = CircleAvatar(
       radius: radius,
-      backgroundImage: url != null
-          ? CachedNetworkImageProvider(url)
-          : null,
-      child: url == null
-          ? Icon(Icons.person, size: radius * 0.8, color: Colors.white70)
-          : null,
+      backgroundImage: url != null ? CachedNetworkImageProvider(url) : null,
+      child: url == null ? Icon(Icons.person, size: radius * 0.8, color: Colors.white70) : null,
     );
     if (isHero) {
       return Hero(tag: 'profile-$imageUrl', child: child);
@@ -866,7 +827,7 @@ class CachedProfileImage extends StatelessWidget {
 }
 
 // ------------------------------------------------------------
-// صفحه اصلی اپلیکیشن (MaterialApp با Provider)
+// اپلیکیشن اصلی
 // ------------------------------------------------------------
 void main() {
   runApp(MyApp());
@@ -888,11 +849,6 @@ class MyApp extends StatelessWidget {
             secondary: Colors.tealAccent,
             surface: Color(0xFF1E1E1E),
           ),
-          cardTheme: CardTheme(
-            color: const Color(0xFF1E1E1E),
-            elevation: 0,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          ),
           appBarTheme: const AppBarTheme(
             backgroundColor: Colors.black,
             elevation: 0,
@@ -910,14 +866,14 @@ class MyApp extends StatelessWidget {
             foregroundColor: Colors.black,
           ),
         ),
-        home: AuthGate(),
+        home: const AuthGate(),
         routes: {
-          '/login': (_) => LoginScreen(),
-          '/register': (_) => RegisterScreen(),
-          '/home': (_) => HomeScreen(),
-          '/profile': (_) => ProfileScreen(),
-          '/dm': (_) => DMListScreen(),
-          '/admin': (_) => AdminScreen(),
+          '/login': (_) => const LoginScreen(),
+          '/register': (_) => const RegisterScreen(),
+          '/home': (_) => const HomeScreen(),
+          '/profile': (_) => const ProfileScreen(),
+          '/dm': (_) => const DMListScreen(),
+          '/admin': (_) => const AdminScreen(),
         },
       ),
     );
@@ -925,9 +881,11 @@ class MyApp extends StatelessWidget {
 }
 
 // ------------------------------------------------------------
-// صفحه خوش‌آمدگویی و هدایت به لاگین
+// صفحه خوش‌آمدگویی
 // ------------------------------------------------------------
 class AuthGate extends StatefulWidget {
+  const AuthGate({Key? key}) : super(key: key);
+
   @override
   State<AuthGate> createState() => _AuthGateState();
 }
@@ -938,10 +896,7 @@ class _AuthGateState extends State<AuthGate> with SingleTickerProviderStateMixin
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    )..forward();
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 800))..forward();
     Future.delayed(const Duration(milliseconds: 1200), () {
       Navigator.pushReplacementNamed(context, '/login');
     });
@@ -985,6 +940,8 @@ class _AuthGateState extends State<AuthGate> with SingleTickerProviderStateMixin
 // صفحه ورود
 // ------------------------------------------------------------
 class LoginScreen extends StatefulWidget {
+  const LoginScreen({Key? key}) : super(key: key);
+
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
@@ -1127,9 +1084,11 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 }
 
 // ------------------------------------------------------------
-// صفحه ثبت‌نام (مشابه قبل، با قابلیت انتخاب عکس)
+// صفحه ثبت‌نام
 // ------------------------------------------------------------
 class RegisterScreen extends StatefulWidget {
+  const RegisterScreen({Key? key}) : super(key: key);
+
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
 }
@@ -1264,13 +1223,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 // صفحه خانه (فید ریلز)
 // ------------------------------------------------------------
 class HomeScreen extends StatefulWidget {
+  const HomeScreen({Key? key}) : super(key: key);
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  int _selectedIndex = 0;
 
   @override
   void initState() {
@@ -1332,7 +1292,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _buildFeed(state),
           const Center(child: Text('اکتشاف (به زودی)')),
           _buildCreateReel(state),
-          ProfileScreen(embedded: true),
+          const ProfileScreen(embedded: true),
         ],
       ),
     );
@@ -1403,9 +1363,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ),
               );
               if (source != null) {
-                final picker = state.pickVideo(); // برای ویدیو
-                // برای تصویر: state.pickImage(fromCamera: source == ImageSource.camera);
-                // اینجا ساده‌سازی: فقط ویدیو
                 final file = await state.pickVideo();
                 if (file != null) {
                   setState(() => selectedMedia = file);
@@ -1476,7 +1433,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 }
 
 // ------------------------------------------------------------
-// کارت ریل (نمایش ویدیو با CachedVideoPlayer)
+// کارت ریل
 // ------------------------------------------------------------
 class ReelCard extends StatefulWidget {
   final Reel reel;
@@ -1549,7 +1506,6 @@ class _ReelCardState extends State<ReelCard> with SingleTickerProviderStateMixin
               ],
             ),
             const SizedBox(height: 12),
-            // نمایش ویدیو یا تصویر
             ClipRRect(
               borderRadius: BorderRadius.circular(16),
               child: widget.reel.mediaType == 'video'
@@ -1665,7 +1621,6 @@ class _ReelDetailScreenState extends State<ReelDetailScreen> {
       appBar: AppBar(title: Text('ریل ${widget.reel.id}')),
       body: Column(
         children: [
-          // مدیا
           Container(
             height: 200,
             margin: const EdgeInsets.all(16),
@@ -1684,7 +1639,6 @@ class _ReelDetailScreenState extends State<ReelDetailScreen> {
                     ),
             ),
           ),
-          // لیست کامنت‌ها
           Expanded(
             child: _comments.isEmpty
                 ? const Center(child: Text('هنوز کامنتی نیست'))
@@ -1697,7 +1651,6 @@ class _ReelDetailScreenState extends State<ReelDetailScreen> {
                     ),
                   ),
           ),
-          // ورودی کامنت
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -1817,6 +1770,13 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = Provider.of<AppState>(context, listen: false);
+      if (state.currentUser == null) {
+        // اگر کاربر جاری نبود، می‌توان از یک یوزرنیم پیش‌فرض استفاده کرد
+        // برای سادگی فعلاً هیچ
+      }
+    });
   }
 
   Future<void> _pickAndUpdateProfilePic() async {
@@ -1831,7 +1791,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   Widget build(BuildContext context) {
     final state = Provider.of<AppState>(context);
     final user = state.currentUser;
-    if (user == null) return const SizedBox();
+    if (user == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(color: Colors.tealAccent)),
+      );
+    }
 
     return Scaffold(
       appBar: widget.embedded ? null : AppBar(
@@ -1982,6 +1946,8 @@ class _SliverTabBarDelegate extends SliverPersistentHeaderDelegate {
 // صفحه لیست پیام‌های خصوصی
 // ------------------------------------------------------------
 class DMListScreen extends StatefulWidget {
+  const DMListScreen({Key? key}) : super(key: key);
+
   @override
   State<DMListScreen> createState() => _DMListScreenState();
 }
@@ -2264,6 +2230,8 @@ class MessageBubble extends StatelessWidget {
 // صفحه ادمین (تیک آبی)
 // ------------------------------------------------------------
 class AdminScreen extends StatefulWidget {
+  const AdminScreen({Key? key}) : super(key: key);
+
   @override
   State<AdminScreen> createState() => _AdminScreenState();
 }
