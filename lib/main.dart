@@ -13,7 +13,7 @@ const int basePort = 443; // HTTPS
 
 class ApiService {
   final HttpClient _client = HttpClient()
-    ..badCertificateCallback = (_, __, ___) => true; // for self‑signed certs
+    ..badgeCallback = (_, __, ___) => true; // for self‑signed certs
 
   // Helper: make HTTPS request and parse JSON
   Future<Map<String, dynamic>> _request(
@@ -195,10 +195,10 @@ class MyApp extends StatelessWidget {
         title: 'Tweeter • Flutter',
         debugShowCheckedModeBanner: false,
         theme: ThemeData.dark().copyWith(
-          primaryColor: Colors.deepPurple,
+          primaryColor: Colors.blue,
           colorScheme: ColorScheme.dark(
-            primary: Colors.deepPurple,
-            secondary: Colors.pinkAccent,
+            primary: Colors.blue,
+            secondary: Colors.blueAccent,
             surface: Color(0xFF1E1E1E),
             background: Color(0xFF121212),
           ),
@@ -212,7 +212,7 @@ class MyApp extends StatelessWidget {
           ),
           bottomNavigationBarTheme: BottomNavigationBarThemeData(
             backgroundColor: Color(0xFF1A1A1A),
-            selectedItemColor: Colors.deepPurpleAccent,
+            selectedItemColor: Colors.blue,
             unselectedItemColor: Colors.grey,
           ),
         ),
@@ -228,7 +228,7 @@ class MyApp extends StatelessWidget {
 class AuthGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final currentUser = AppState.of(context).currentUsername;
+    final currentUser = AppStateProvider.of(context).currentUsername;
     if (currentUser != null) {
       return MainScreen();
     }
@@ -277,7 +277,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
     final res = await _api.getUserProfile(username);
     setState(() => _isLoading = false);
     if (res['success'] == true) {
-      AppState.of(context).login(username);
+      AppStateProvider.of(context).login(username);
     } else {
       _showError('User not found');
     }
@@ -295,7 +295,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
     final res = await _api.register(username, name, bio);
     setState(() => _isLoading = false);
     if (res['success'] == true) {
-      AppState.of(context).login(username);
+      AppStateProvider.of(context).login(username);
     } else {
       _showError(res['error'] ?? 'Registration failed');
     }
@@ -329,7 +329,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                   child: Icon(
                     Icons.flutter_dash,
                     size: 80,
-                    color: Colors.deepPurpleAccent,
+                    color: Colors.blueAccent,
                   ),
                 ),
                 SizedBox(height: 20),
@@ -349,7 +349,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                         controller: _tabController,
                         indicator: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
-                          color: Colors.deepPurple.withOpacity(0.3),
+                          color: Colors.blue.withOpacity(0.3),
                         ),
                         labelColor: Colors.white,
                         unselectedLabelColor: Colors.grey,
@@ -499,7 +499,7 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
           FeedScreen(),
           ExploreScreen(),
           ComposeScreen(),
-          ProfileScreen(username: AppState.of(context).currentUsername!),
+          ProfileScreen(username: AppStateProvider.of(context).currentUsername!),
           MessagesScreen(),
         ],
       ),
@@ -538,7 +538,7 @@ class _FeedScreenState extends State<FeedScreen> with AutomaticKeepAliveClientMi
   @override
   void initState() {
     super.initState();
-    currentUser = AppState.of(context).currentUsername!;
+    currentUser = AppStateProvider.of(context).currentUsername!;
     _refreshFeed();
   }
 
@@ -558,7 +558,7 @@ class _FeedScreenState extends State<FeedScreen> with AutomaticKeepAliveClientMi
           IconButton(
             icon: Icon(Icons.logout),
             onPressed: () {
-              AppState.of(context).logout();
+              AppStateProvider.of(context).logout();
             },
           ),
         ],
@@ -615,7 +615,7 @@ class _TweetCardState extends State<TweetCard> {
   @override
   void initState() {
     super.initState();
-    currentUser = AppState.of(context).currentUsername;
+    currentUser = AppStateProvider.of(context).currentUsername;
     likesCount = widget.tweet['likes_count'] ?? 0;
     bookmarksCount = widget.tweet['bookmarks_count'] ?? 0;
     retweetsCount = widget.tweet['retweets_count'] ?? 0;
@@ -668,68 +668,88 @@ class _TweetCardState extends State<TweetCard> {
   @override
   Widget build(BuildContext context) {
     final tweet = widget.tweet;
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: Colors.deepPurple,
-                  child: Text(tweet['username'][0].toUpperCase()),
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '@${tweet['username']}',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        tweet['subject'] ?? '',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                    ],
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TweetDetailScreen(tweetId: tweet['id']),
+          ),
+        );
+      },
+      child: Card(
+        margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: Colors.blue,
+                    child: Text(tweet['username'][0].toUpperCase()),
                   ),
-                ),
-              ],
-            ),
-            SizedBox(height: 10),
-            Text(tweet['content'] ?? ''),
-            SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildActionButton(
-                  icon: Icons.favorite,
-                  color: Colors.red,
-                  count: likesCount,
-                  onPressed: _toggleLike,
-                  isLoading: _isLiking,
-                ),
-                _buildActionButton(
-                  icon: Icons.repeat,
-                  color: Colors.green,
-                  count: retweetsCount,
-                  onPressed: _retweet,
-                  isLoading: false,
-                ),
-                _buildActionButton(
-                  icon: Icons.bookmark,
-                  color: Colors.blue,
-                  count: bookmarksCount,
-                  onPressed: _toggleBookmark,
-                  isLoading: _isBookmarking,
-                ),
-              ],
-            ),
-          ],
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              tweet['username'],
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              '@${tweet['username']}',
+                              style: TextStyle(color: Colors.grey, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                        if (tweet['subject']?.isNotEmpty ?? false)
+                          Text(
+                            tweet['subject'],
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 8),
+              Text(tweet['content'] ?? ''),
+              SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildActionButton(
+                    icon: Icons.favorite,
+                    color: Colors.red,
+                    count: likesCount,
+                    onPressed: _toggleLike,
+                    isLoading: _isLiking,
+                  ),
+                  _buildActionButton(
+                    icon: Icons.repeat,
+                    color: Colors.green,
+                    count: retweetsCount,
+                    onPressed: _retweet,
+                    isLoading: false,
+                  ),
+                  _buildActionButton(
+                    icon: Icons.bookmark,
+                    color: Colors.blue,
+                    count: bookmarksCount,
+                    onPressed: _toggleBookmark,
+                    isLoading: _isBookmarking,
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -761,6 +781,87 @@ class _TweetCardState extends State<TweetCard> {
             Text('$count', style: TextStyle(color: Colors.white70)),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ------------------------------------------------------------
+// Tweet Detail Screen (each tweet has its own page)
+// ------------------------------------------------------------
+class TweetDetailScreen extends StatefulWidget {
+  final int tweetId;
+  const TweetDetailScreen({Key? key, required this.tweetId}) : super(key: key);
+
+  @override
+  _TweetDetailScreenState createState() => _TweetDetailScreenState();
+}
+
+class _TweetDetailScreenState extends State<TweetDetailScreen> {
+  final ApiService _api = ApiService();
+  late Future _tweetFuture;
+  String? currentUser;
+
+  @override
+  void initState() {
+    super.initState();
+    currentUser = AppStateProvider.of(context).currentUsername;
+    _tweetFuture = _api.getTweet(widget.tweetId);
+  }
+
+  Future<void> _reply() async {
+    final tweet = await _tweetFuture;
+    if (tweet['success'] != true) return;
+    final original = tweet['data'];
+    // Navigate to ComposeScreen with parentId
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ComposeScreen(
+          parentId: widget.tweetId,
+          initialContent: '@${original['username']} ',
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Tweet'),
+      ),
+      body: FutureBuilder(
+        future: _tweetFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Center(child: CircularProgressIndicator());
+          }
+          if (!snapshot.hasData || snapshot.data['success'] != true) {
+            return Center(child: Text('Tweet not found'));
+          }
+          final tweet = snapshot.data['data'];
+          return SingleChildScrollView(
+            child: Column(
+              children: [
+                TweetCard(tweet: tweet),
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: ElevatedButton.icon(
+                    onPressed: _reply,
+                    icon: Icon(Icons.reply),
+                    label: Text('Reply'),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: Size(double.infinity, 50),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                    ),
+                  ),
+                ),
+                // You could also load replies here using parent_id endpoint, but not implemented in API
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -843,8 +944,8 @@ class _ExploreScreenState extends State<ExploreScreen> with AutomaticKeepAliveCl
                   },
                   children: [Icon(Icons.people), Icon(Icons.topic), Icon(Icons.trending_up)],
                   color: Colors.grey,
-                  selectedColor: Colors.deepPurpleAccent,
-                  fillColor: Colors.deepPurple.withOpacity(0.2),
+                  selectedColor: Colors.blue,
+                  fillColor: Colors.blue.withOpacity(0.2),
                 ),
               ],
             ),
@@ -862,7 +963,7 @@ class _ExploreScreenState extends State<ExploreScreen> with AutomaticKeepAliveCl
                   itemBuilder: (ctx, i) {
                     final tag = trending[i];
                     return ListTile(
-                      leading: Icon(Icons.tag, color: Colors.deepPurple),
+                      leading: Icon(Icons.tag, color: Colors.blue),
                       title: Text(tag['hashtag']),
                       trailing: Text('${tag['count']} tweets'),
                       onTap: () {
@@ -956,29 +1057,55 @@ class HashtagFeedScreen extends StatelessWidget {
 }
 
 // ------------------------------------------------------------
-// Compose Tweet Screen (with slide animation)
+// Compose Tweet Screen (with slide animation, now supports replies)
 // ------------------------------------------------------------
 class ComposeScreen extends StatefulWidget {
+  final int? parentId;
+  final String? initialSubject;
+  final String? initialContent;
+
+  const ComposeScreen({
+    Key? key,
+    this.parentId,
+    this.initialSubject,
+    this.initialContent,
+  }) : super(key: key);
+
   @override
   _ComposeScreenState createState() => _ComposeScreenState();
 }
 
 class _ComposeScreenState extends State<ComposeScreen> with AutomaticKeepAliveClientMixin {
-  final TextEditingController _subjectController = TextEditingController();
-  final TextEditingController _contentController = TextEditingController();
+  late TextEditingController _subjectController;
+  late TextEditingController _contentController;
   final ApiService _api = ApiService();
   bool _isPosting = false;
 
   @override
+  void initState() {
+    super.initState();
+    _subjectController = TextEditingController(text: widget.initialSubject ?? '');
+    _contentController = TextEditingController(text: widget.initialContent ?? '');
+  }
+
+  @override
   bool get wantKeepAlive => true;
+
+  @override
+  void dispose() {
+    _subjectController.dispose();
+    _contentController.dispose();
+    super.dispose();
+  }
 
   Future<void> _postTweet() async {
     if (_subjectController.text.isEmpty && _contentController.text.isEmpty) return;
     setState(() => _isPosting = true);
     final res = await _api.postTweet(
-      username: AppState.of(context).currentUsername!,
+      username: AppStateProvider.of(context).currentUsername!,
       subject: _subjectController.text,
       content: _contentController.text,
+      parentId: widget.parentId,
     );
     setState(() => _isPosting = false);
     if (res['success'] == true) {
@@ -987,6 +1114,7 @@ class _ComposeScreenState extends State<ComposeScreen> with AutomaticKeepAliveCl
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Tweet posted!'), backgroundColor: Colors.green),
       );
+      Navigator.pop(context);
     }
   }
 
@@ -994,24 +1122,25 @@ class _ComposeScreenState extends State<ComposeScreen> with AutomaticKeepAliveCl
   Widget build(BuildContext context) {
     super.build(context);
     return Scaffold(
-      appBar: AppBar(title: Text('Compose Tweet')),
+      appBar: AppBar(title: Text(widget.parentId != null ? 'Reply' : 'Compose Tweet')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            TextField(
-              controller: _subjectController,
-              decoration: InputDecoration(
-                labelText: 'Subject',
-                border: OutlineInputBorder(),
+            if (widget.parentId == null)
+              TextField(
+                controller: _subjectController,
+                decoration: InputDecoration(
+                  labelText: 'Subject',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            SizedBox(height: 16),
+            if (widget.parentId == null) SizedBox(height: 16),
             TextField(
               controller: _contentController,
               maxLines: 5,
               decoration: InputDecoration(
-                labelText: 'What\'s happening?',
+                labelText: widget.parentId != null ? 'Your reply' : 'What\'s happening?',
                 border: OutlineInputBorder(),
                 alignLabelWithHint: true,
               ),
@@ -1021,7 +1150,7 @@ class _ComposeScreenState extends State<ComposeScreen> with AutomaticKeepAliveCl
               onPressed: _isPosting ? null : _postTweet,
               child: _isPosting
                   ? CircularProgressIndicator(color: Colors.white)
-                  : Text('Tweet', style: TextStyle(fontSize: 18)),
+                  : Text(widget.parentId != null ? 'Reply' : 'Tweet', style: TextStyle(fontSize: 18)),
               style: ElevatedButton.styleFrom(
                 minimumSize: Size(double.infinity, 50),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
@@ -1057,7 +1186,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   @override
   void initState() {
     super.initState();
-    currentUser = AppState.of(context).currentUsername;
+    currentUser = AppStateProvider.of(context).currentUsername;
     _tabController = TabController(length: 4, vsync: this);
     _refreshData();
   }
@@ -1138,7 +1267,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                           children: [
                             CircleAvatar(
                               radius: 40,
-                              backgroundColor: Colors.deepPurple,
+                              backgroundColor: Colors.blue,
                               child: Text(
                                 userData['name']?[0] ?? '?',
                                 style: TextStyle(fontSize: 32),
@@ -1181,9 +1310,9 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   delegate: _SliverAppBarDelegate(
                     TabBar(
                       controller: _tabController,
-                      labelColor: Colors.deepPurpleAccent,
+                      labelColor: Colors.blue,
                       unselectedLabelColor: Colors.grey,
-                      indicatorColor: Colors.deepPurple,
+                      indicatorColor: Colors.blue,
                       tabs: [
                         Tab(text: 'Tweets'),
                         Tab(text: 'Followers'),
@@ -1315,7 +1444,7 @@ class _MessagesScreenState extends State<MessagesScreen> with AutomaticKeepAlive
   @override
   void initState() {
     super.initState();
-    currentUser = AppState.of(context).currentUsername!;
+    currentUser = AppStateProvider.of(context).currentUsername!;
     _refreshInbox();
   }
 
@@ -1511,7 +1640,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
                         margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         padding: EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: isMe ? Colors.deepPurple : Colors.grey[800],
+                          color: isMe ? Colors.blue : Colors.grey[800],
                           borderRadius: BorderRadius.circular(16).copyWith(
                             bottomRight: isMe ? Radius.zero : null,
                             bottomLeft: !isMe ? Radius.zero : null,
@@ -1559,7 +1688,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   onPressed: _sendMessage,
                   mini: true,
                   child: Icon(Icons.send),
-                  backgroundColor: Colors.deepPurple,
+                  backgroundColor: Colors.blue,
                 ),
               ],
             ),
