@@ -13,7 +13,7 @@ const int basePort = 443; // HTTPS
 
 class ApiService {
   final HttpClient _client = HttpClient()
-    ..badgeCallback = (_, __, ___) => true; // for self‑signed certs
+    ..badCertificateCallback = (X509Certificate cert, String host, int port) => true; // ← corrected property name
 
   // Helper: make HTTPS request and parse JSON
   Future<Map<String, dynamic>> _request(
