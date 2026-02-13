@@ -1257,8 +1257,10 @@ class _RegisterPageState extends State<RegisterPage> with SingleTickerProviderSt
         if (mounted) Navigator.pushReplacementNamed(context, '/home');
       } else {
         String errorMsg = result?['error'] ?? 'ثبت‌نام ناموفق بود';
-        if (result?['statusCode'] != null) {
-          errorMsg += ' (کد خطا: ${result['statusCode']})';
+        // رفع خطای null safety: استفاده از متغیر موقت برای statusCode
+        final statusCode = result?['statusCode'];
+        if (statusCode != null) {
+          errorMsg += ' (کد خطا: $statusCode)';
         }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
