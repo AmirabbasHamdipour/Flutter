@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show TextDirection; // اضافه شد برای TextDirection
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
@@ -18,7 +19,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image/image.dart' as img;
-import 'package:video_player/video_player.dart';
+// import 'package:video_player/video_player.dart'; // حذف شد (غیرضروری)
 import 'package:http_parser/http_parser.dart';
 import 'package:get_it/get_it.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -397,7 +398,7 @@ class ApiService {
             final retryCount = e.requestOptions.extra['retryCount'] ?? 0;
             if (retryCount < maxRetries) {
               e.requestOptions.extra['retryCount'] = retryCount + 1;
-              await Future.delayed(Duration(seconds: 2 * (retryCount + 1)));
+              await Future.delayed(Duration(seconds: (2 * (retryCount + 1)).toInt())); // اصلاح شد
               try {
                 final response = await _dio!.fetch(e.requestOptions);
                 handler.resolve(response);
@@ -454,7 +455,7 @@ class ApiService {
           final retryCount = e.requestOptions.extra['retryCount'] ?? 0;
           if (retryCount < maxRetries) {
             e.requestOptions.extra['retryCount'] = retryCount + 1;
-            await Future.delayed(Duration(seconds: 2 * (retryCount + 1)));
+            await Future.delayed(Duration(seconds: (2 * (retryCount + 1)).toInt())); // اصلاح شد
             try {
               final response = await _dio!.fetch(e.requestOptions);
               handler.resolve(response);
@@ -2136,7 +2137,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     if (file != null) {
       setState(() {
         _selectedMedia = file;
-        _mediaPreviewPath = file.path;
+        _mediaPreviewPath = file?.path; // اصلاح شد: استفاده از ?.
       });
     }
   }
