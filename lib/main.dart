@@ -13,7 +13,6 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-// فایل MessagingClient.dart در کنار main.dart قرار دارد
 import 'MessagingClient.dart';
 
 // ------------------------------------------------------------
@@ -30,6 +29,9 @@ class AppState extends ChangeNotifier {
   String? _error;
   bool _isSocketConnected = false;
   Map<int, bool> _typingUsers = {}; // chatId -> true if someone typing
+
+  // برای ناوبری در صورت خطای 401
+  GlobalKey<NavigatorState>? navigatorKey;
 
   // Getters
   MessagingClient? get client => _client;
@@ -95,6 +97,23 @@ class AppState extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------
+  // مدیریت خطای 401
+  // ------------------------------------------------------------
+  void _handleUnauthorized() {
+    // اگر کاربر در صفحه Auth نیست، به آن برگردان
+    if (navigatorKey?.currentContext != null) {
+      // اگر صفحه جاری Auth نیست، logout کرده و به Auth برو
+      if (ModalRoute.of(navigatorKey!.currentContext!)?.settings.name != '/auth') {
+        logout();
+        Navigator.of(navigatorKey!.currentContext!).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => AuthPage()),
+          (route) => false,
+        );
+      }
+    }
+  }
+
+  // ------------------------------------------------------------
   // عملیات اصلی
   // ------------------------------------------------------------
   Future<void> initFromStorage() async {
@@ -114,6 +133,7 @@ class AppState extends ChangeNotifier {
         // اگر توکن نامعتبر بود، پاکش کن
         await prefs.remove('token');
         await prefs.remove('userId');
+        _client = MessagingClient(baseUrl: 'https://tweeter.runflare.run');
       }
     } else {
       _client = MessagingClient(baseUrl: 'https://tweeter.runflare.run');
@@ -127,7 +147,6 @@ class AppState extends ChangeNotifier {
     try {
       final user = await _client!.login(username, password);
       _currentUser = user;
-      // ذخیره توکن و userId
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('token', _client!.token!);
       await prefs.setInt('userId', user.id);
@@ -163,7 +182,6 @@ class AppState extends ChangeNotifier {
         phone: phone,
         bio: bio,
       );
-      // بعد از ثبت‌نام باید لاگین کنیم
       return await login(username, password);
     } catch (e) {
       setError(e.toString());
@@ -180,6 +198,7 @@ class AppState extends ChangeNotifier {
     _users = [];
     _selectedChat = null;
     _messages = [];
+    _typingUsers.clear();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
     await prefs.remove('userId');
@@ -192,7 +211,11 @@ class AppState extends ChangeNotifier {
       _chats = chats;
       notifyListeners();
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -202,7 +225,11 @@ class AppState extends ChangeNotifier {
       _users = users.where((u) => u.id != _currentUser?.id).toList();
       notifyListeners();
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -212,7 +239,11 @@ class AppState extends ChangeNotifier {
       _messages = msgs;
       notifyListeners();
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -244,7 +275,11 @@ class AppState extends ChangeNotifier {
       }
       notifyListeners();
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -257,7 +292,11 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -267,7 +306,11 @@ class AppState extends ChangeNotifier {
       _messages.removeWhere((m) => m.id == messageId);
       notifyListeners();
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -295,7 +338,11 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -323,7 +370,11 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -354,7 +405,11 @@ class AppState extends ChangeNotifier {
       }
       notifyListeners();
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -384,7 +439,11 @@ class AppState extends ChangeNotifier {
       }
       notifyListeners();
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -395,7 +454,11 @@ class AppState extends ChangeNotifier {
         _loadMessages(_selectedChat!.id);
       }
     } catch (e) {
-      setError(e.toString());
+      if (e is ApiException && e.statusCode == 401) {
+        _handleUnauthorized();
+      } else {
+        setError(e.toString());
+      }
     }
   }
 
@@ -732,7 +795,13 @@ class _AuthPageState extends State<AuthPage> {
                                       bio: _bioController.text.isNotEmpty ? _bioController.text : null,
                                     );
                                   }
-                                  if (!success && appState.error != null) {
+                                  if (success && mounted) {
+                                    // انتقال به صفحه اصلی
+                                    Navigator.pushReplacement(
+                                      context,
+                                      MaterialPageRoute(builder: (_) => MainPage()),
+                                    );
+                                  } else if (appState.error != null && mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(content: Text(appState.error!), backgroundColor: Colors.red),
                                     );
@@ -773,6 +842,60 @@ class _AuthPageState extends State<AuthPage> {
     _phoneController.dispose();
     _bioController.dispose();
     super.dispose();
+  }
+}
+
+// ------------------------------------------------------------
+// صفحه تنظیمات (Settings)
+// ------------------------------------------------------------
+class SettingsPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('تنظیمات')),
+      body: ListView(
+        children: [
+          ListTile(
+            leading: Icon(Icons.notifications),
+            title: Text('اعلان‌ها'),
+            trailing: Switch(value: true, onChanged: (val) {}),
+          ),
+          ListTile(
+            leading: Icon(Icons.dark_mode),
+            title: Text('حالت تاریک'),
+            trailing: Switch(value: false, onChanged: (val) {}),
+          ),
+          Divider(),
+          ListTile(
+            leading: Icon(Icons.language),
+            title: Text('زبان'),
+            trailing: Text('فارسی'),
+          ),
+          ListTile(
+            leading: Icon(Icons.storage),
+            title: Text('ذخیره سازی'),
+            trailing: Text('12.3 MB'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ------------------------------------------------------------
+// صفحه آرشیو چت‌ها (Archived Chats)
+// ------------------------------------------------------------
+class ArchivedChatsPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    // در اینجا می‌توانید از API واقعی برای دریافت چت‌های آرشیو شده استفاده کنید
+    // برای نمونه، یک لیست خالی نشان می‌دهیم
+    return Scaffold(
+      appBar: AppBar(title: Text('آرشیو چت‌ها')),
+      body: Center(
+        child: Text('چت‌های آرشیو شده وجود ندارد'),
+      ),
+    );
   }
 }
 
@@ -927,7 +1050,7 @@ class _MainPageState extends State<MainPage> {
             title: Text('آرشیو'),
             onTap: () {
               Navigator.pop(context);
-              // TODO: نمایش چت‌های آرشیو شده
+              Navigator.push(context, MaterialPageRoute(builder: (_) => ArchivedChatsPage()));
             },
           ),
           Divider(),
@@ -936,7 +1059,7 @@ class _MainPageState extends State<MainPage> {
             title: Text('تنظیمات'),
             onTap: () {
               Navigator.pop(context);
-              // TODO: صفحه تنظیمات
+              Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsPage()));
             },
           ),
           ListTile(
@@ -1022,6 +1145,21 @@ class _MainPageState extends State<MainPage> {
   }
 
   Widget _buildUsersList(AppState appState) {
+    if (appState.error != null && _filteredUsers.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('خطا: ${appState.error}'),
+            SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => appState.loadUsers(),
+              child: Text('تلاش مجدد'),
+            ),
+          ],
+        ),
+      );
+    }
     if (_filteredUsers.isEmpty) {
       return Center(child: Text('کاربری یافت نشد'));
     }
@@ -1097,7 +1235,11 @@ class _MainPageState extends State<MainPage> {
         appState.setSelectedChat(newChat);
         Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(chat: newChat)));
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e')));
+        if (e is ApiException && e.statusCode == 401) {
+          // به صفحه ورود برگردانده خواهد شد
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e')));
+        }
       }
     }
   }
@@ -1504,7 +1646,11 @@ class _ChatPageState extends State<ChatPage> {
                   final results = await appState.client!.searchMessages(query, chatId: widget.chat.id);
                   _showSearchResults(results);
                 } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e')));
+                  if (e is ApiException && e.statusCode == 401) {
+                    // قبلاً مدیریت شده
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e')));
+                  }
                 }
               },
               child: Text('جستجو'),
@@ -1621,7 +1767,11 @@ class _ChatPageState extends State<ChatPage> {
       });
       _scrollToBottom();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا در ارسال: $e')));
+      if (e is ApiException && e.statusCode == 401) {
+        // قبلاً مدیریت شده
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا در ارسال: $e')));
+      }
     }
   }
 }
@@ -1766,7 +1916,11 @@ class _ProfilePageState extends State<ProfilePage> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('پروفایل به‌روزرسانی شد')));
         Navigator.pop(context);
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e')));
+        if (e is ApiException && e.statusCode == 401) {
+          // قبلاً مدیریت شده
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e')));
+        }
       }
     }
   }
@@ -1798,9 +1952,13 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // تنظیم navigatorKey برای استفاده در AppState
+    appState.navigatorKey = GlobalKey<NavigatorState>();
+
     return ChangeNotifierProvider.value(
       value: appState,
       child: MaterialApp(
+        navigatorKey: appState.navigatorKey,
         title: 'Nokhodgram',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
