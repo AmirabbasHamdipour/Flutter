@@ -21,6 +21,8 @@ import 'package:image/image.dart' as img;
 import 'package:video_player/video_player.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:get_it/get_it.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 final getIt = GetIt.instance;
 
@@ -33,11 +35,13 @@ void main() async {
   final authProvider = AuthProvider();
   final chatProvider = ChatProvider();
   final messageProvider = MessageProvider();
+  final connectivityService = ConnectivityService();
 
   // Register in GetIt
   getIt.registerSingleton<AuthProvider>(authProvider);
   getIt.registerSingleton<ChatProvider>(chatProvider);
   getIt.registerSingleton<MessageProvider>(messageProvider);
+  getIt.registerSingleton<ConnectivityService>(connectivityService);
 
   runApp(
     MultiProvider(
@@ -45,6 +49,7 @@ void main() async {
         ChangeNotifierProvider.value(value: authProvider),
         ChangeNotifierProvider.value(value: chatProvider),
         ChangeNotifierProvider.value(value: messageProvider),
+        ChangeNotifierProvider.value(value: connectivityService),
       ],
       child: const MyApp(),
     ),
@@ -57,23 +62,30 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Messenger',
+      title: 'پیام‌رسان',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
-        fontFamily: 'Roboto',
-        scaffoldBackgroundColor: Colors.grey[100],
+        fontFamily: 'Vazir', // در صورت وجود فونت فارسی
+        scaffoldBackgroundColor: Colors.grey[50],
         appBarTheme: const AppBarTheme(
           elevation: 0,
           backgroundColor: Colors.white,
-          foregroundColor: Colors.black,
+          foregroundColor: Colors.black87,
           titleTextStyle: TextStyle(
-            color: Colors.black,
+            color: Colors.black87,
             fontSize: 20,
-            fontWeight: FontWeight.bold,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ),
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('fa', 'IR')],
+      locale: const Locale('fa', 'IR'),
       home: const SplashScreen(),
       routes: {
         '/login': (ctx) => const LoginPage(),
@@ -206,7 +218,7 @@ class Chat {
     if (type == 'private' && otherUser != null) {
       return otherUser!.displayName;
     }
-    return title ?? 'Unknown';
+    return title ?? 'ناشناس';
   }
 }
 
@@ -302,14 +314,49 @@ class Reaction {
       };
 }
 
+// -------------------- Connectivity Service --------------------
+class ConnectivityService extends ChangeNotifier {
+  bool _isConnected = true;
+  final Connectivity _connectivity = Connectivity();
+  late StreamSubscription<ConnectivityResult> _subscription;
+
+  bool get isConnected => _isConnected;
+
+  ConnectivityService() {
+    _initConnectivity();
+    _subscription = _connectivity.onConnectivityChanged.listen(_updateConnectionStatus);
+  }
+
+  Future<void> _initConnectivity() async {
+    try {
+      final result = await _connectivity.checkConnectivity();
+      _updateConnectionStatus(result);
+    } catch (e) {
+      print('خطا در بررسی اتصال: $e');
+    }
+  }
+
+  void _updateConnectionStatus(ConnectivityResult result) {
+    _isConnected = result != ConnectivityResult.none;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _subscription.cancel();
+    super.dispose();
+  }
+}
+
 // -------------------- API Service --------------------
 class ApiService {
   static final ApiService _instance = ApiService._internal();
   factory ApiService() => _instance;
   ApiService._internal();
 
-  Dio? _dio; // changed from late to nullable
+  Dio? _dio;
   String? _token;
+  static const int maxRetries = 3;
 
   void _ensureDio() {
     if (_dio == null) {
@@ -335,9 +382,30 @@ class ApiService {
           }
           return handler.next(options);
         },
-        onError: (DioError e, handler) {
+        onError: (DioError e, handler) async {
           if (e.response?.statusCode == 401) {
             getIt<AuthProvider>().logout();
+          }
+          // تلاش مجدد برای خطاهای شبکه
+          if (e.type == DioErrorType.connectionError || e.type == DioErrorType.receiveTimeout) {
+            final connectivity = getIt<ConnectivityService>();
+            if (!connectivity.isConnected) {
+              // اگر اینترنت قطع است، خطا را نمایش بده
+              return handler.next(e);
+            }
+            // تلاش مجدد تا maxRetries
+            final retryCount = e.requestOptions.extra['retryCount'] ?? 0;
+            if (retryCount < maxRetries) {
+              e.requestOptions.extra['retryCount'] = retryCount + 1;
+              await Future.delayed(Duration(seconds: 2 * (retryCount + 1)));
+              try {
+                final response = await _dio!.fetch(e.requestOptions);
+                handler.resolve(response);
+                return;
+              } catch (e) {
+                // ادامه
+              }
+            }
           }
           return handler.next(e);
         },
@@ -352,7 +420,6 @@ class ApiService {
 
   void init({String? token}) {
     _token = token;
-    // Force re-creation of Dio with new token
     _dio = Dio(BaseOptions(
       baseUrl: apiUrl,
       connectTimeout: const Duration(seconds: 30),
@@ -375,9 +442,27 @@ class ApiService {
         }
         return handler.next(options);
       },
-      onError: (DioError e, handler) {
+      onError: (DioError e, handler) async {
         if (e.response?.statusCode == 401) {
           getIt<AuthProvider>().logout();
+        }
+        if (e.type == DioErrorType.connectionError || e.type == DioErrorType.receiveTimeout) {
+          final connectivity = getIt<ConnectivityService>();
+          if (!connectivity.isConnected) {
+            return handler.next(e);
+          }
+          final retryCount = e.requestOptions.extra['retryCount'] ?? 0;
+          if (retryCount < maxRetries) {
+            e.requestOptions.extra['retryCount'] = retryCount + 1;
+            await Future.delayed(Duration(seconds: 2 * (retryCount + 1)));
+            try {
+              final response = await _dio!.fetch(e.requestOptions);
+              handler.resolve(response);
+              return;
+            } catch (e) {
+              // ادامه
+            }
+          }
         }
         return handler.next(e);
       },
@@ -426,14 +511,39 @@ class ApiService {
   }
 
   Future<Response> uploadFile(String path, String field, File file,
-      {Map<String, dynamic>? data, String? method = 'POST'}) async {
+      {Map<String, dynamic>? data, String? method = 'POST', ProgressCallback? onSendProgress}) async {
     _ensureDio();
     String fileName = file.path.split('/').last;
+    // فشرده‌سازی تصویر اگر فایل تصویری باشد
+    File? compressedFile;
+    if (file.path.toLowerCase().endsWith('.jpg') || file.path.toLowerCase().endsWith('.jpeg') || file.path.toLowerCase().endsWith('.png')) {
+      compressedFile = await _compressImage(file);
+    }
+    final fileToUpload = compressedFile ?? file;
     FormData formData = FormData.fromMap({
       ...?data,
-      field: await MultipartFile.fromFile(file.path, filename: fileName),
+      field: await MultipartFile.fromFile(fileToUpload.path, filename: fileName),
     });
-    return await _dio!.post(path, data: formData);
+    return await _dio!.post(path, data: formData, onSendProgress: onSendProgress);
+  }
+
+  Future<File> _compressImage(File file) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final targetPath = '${tempDir.path}/${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final imageBytes = await file.readAsBytes();
+      img.Image? image = img.decodeImage(imageBytes);
+      if (image != null) {
+        // کاهش کیفیت و اندازه
+        img.Image resized = img.copyResize(image, width: 1024); // حداکثر عرض 1024
+        final compressedBytes = img.encodeJpg(resized, quality: 75);
+        final compressedFile = File(targetPath)..writeAsBytesSync(compressedBytes);
+        return compressedFile;
+      }
+    } catch (e) {
+      print('خطا در فشرده‌سازی: $e');
+    }
+    return file;
   }
 }
 
@@ -445,28 +555,51 @@ class SocketService {
 
   IO.Socket? _socket;
   bool _isConnected = false;
+  String? _currentToken;
+  Timer? _reconnectTimer;
 
   void connect(String token) {
+    _currentToken = token;
     if (_isConnected) return;
     _socket = IO.io(socketUrl, <String, dynamic>{
       'transports': ['websocket'],
       'autoConnect': true,
       'query': {'token': token},
+      'reconnection': true,
+      'reconnectionAttempts': 5,
+      'reconnectionDelay': 2000,
     });
     _socket?.onConnect((_) {
       print('Socket connected');
       _isConnected = true;
+      _reconnectTimer?.cancel();
     });
     _socket?.onDisconnect((_) {
       print('Socket disconnected');
       _isConnected = false;
+      _attemptReconnect();
     });
     _socket?.onError((err) {
       print('Socket error: $err');
+      _isConnected = false;
+    });
+    _socket?.onReconnect((_) {
+      print('Socket reconnected');
+      _isConnected = true;
+    });
+  }
+
+  void _attemptReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 5), () {
+      if (!_isConnected && _currentToken != null) {
+        connect(_currentToken!);
+      }
     });
   }
 
   void disconnect() {
+    _reconnectTimer?.cancel();
     _socket?.disconnect();
     _socket?.close();
     _isConnected = false;
@@ -531,7 +664,6 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
     try {
       final response = await _api.post('/register', data: userData);
-      // After register, automatically login
       bool loginSuccess = await login(userData['username'], userData['password']);
       if (loginSuccess) {
         return {'success': true};
@@ -923,12 +1055,12 @@ class MessageProvider extends ChangeNotifier {
     }
   }
 
-  Future<Message?> sendMessage(int chatId, String text, {int? replyTo, File? mediaFile}) async {
+  Future<Message?> sendMessage(int chatId, String text, {int? replyTo, File? mediaFile, ProgressCallback? onSendProgress}) async {
     try {
       final uri = '/chats/$chatId/messages';
       if (mediaFile != null) {
         final response = await _api.uploadFile(uri, 'media', mediaFile,
-            data: {'text': text, 'reply_to': replyTo});
+            data: {'text': text, 'reply_to': replyTo}, onSendProgress: onSendProgress);
         final msg = Message.fromJson(response.data);
         addMessage(response.data);
         return msg;
@@ -1003,26 +1135,16 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
-
+class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      duration: const Duration(seconds: 2),
-      vsync: this,
-    );
-    _animation = CurvedAnimation(parent: _controller, curve: Curves.elasticOut);
-    _controller.forward();
-
     _checkAuth();
   }
 
   Future<void> _checkAuth() async {
     await getIt<AuthProvider>().loadToken();
-    await Future.delayed(const Duration(seconds: 2));
+    await Future.delayed(const Duration(seconds: 1));
     if (mounted) {
       final auth = getIt<AuthProvider>();
       if (auth.isLoggedIn) {
@@ -1034,31 +1156,12 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   }
 
   @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Colors.blue, Colors.purple],
-          ),
-        ),
-        child: Center(
-          child: ScaleTransition(
-            scale: _animation,
-            child: const Icon(
-              Icons.chat,
-              size: 100,
-              color: Colors.white,
-            ),
-          ),
+        color: Colors.white,
+        child: const Center(
+          child: Icon(Icons.chat, size: 80, color: Colors.blue),
         ),
       ),
     );
@@ -1073,33 +1176,16 @@ class LoginPage extends StatefulWidget {
   State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMixin {
+class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
-  late AnimationController _animationController;
-  late Animation<Offset> _slideAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: this,
-    );
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.5),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _animationController, curve: Curves.easeOut));
-    _animationController.forward();
-  }
 
   @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
-    _animationController.dispose();
     super.dispose();
   }
 
@@ -1111,7 +1197,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         Navigator.pushReplacementNamed(context, '/home');
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Login failed')),
+          const SnackBar(content: Text('ورود ناموفق بود')),
         );
       }
     }
@@ -1122,112 +1208,83 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     final auth = getIt<AuthProvider>();
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.white, Color(0xFFE3F2FD)],
-          ),
-        ),
+        color: Colors.white,
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
-              child: SlideTransition(
-                position: _slideAnimation,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.chat_bubble_outline,
-                      size: 80,
-                      color: Colors.blue,
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      'Welcome Back!',
-                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Sign in to continue',
-                      style: TextStyle(fontSize: 16, color: Colors.grey),
-                    ),
-                    const SizedBox(height: 40),
-                    Form(
-                      key: _formKey,
-                      child: Column(
-                        children: [
-                          TextFormField(
-                            controller: _usernameController,
-                            decoration: InputDecoration(
-                              labelText: 'Username',
-                              prefixIcon: const Icon(Icons.person),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                              filled: true,
-                              fillColor: Colors.white,
-                            ),
-                            validator: (v) => v!.isEmpty ? 'Required' : null,
-                          ),
-                          const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _passwordController,
-                            obscureText: _obscurePassword,
-                            decoration: InputDecoration(
-                              labelText: 'Password',
-                              prefixIcon: const Icon(Icons.lock),
-                              suffixIcon: IconButton(
-                                icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
-                                onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                              filled: true,
-                              fillColor: Colors.white,
-                            ),
-                            validator: (v) => v!.isEmpty ? 'Required' : null,
-                          ),
-                          const SizedBox(height: 30),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: ElevatedButton(
-                              onPressed: auth.isLoading ? null : _login,
-                              style: ElevatedButton.styleFrom(
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(30),
-                                ),
-                                backgroundColor: Colors.blue,
-                              ),
-                              child: auth.isLoading
-                                  ? const CircularProgressIndicator(color: Colors.white)
-                                  : const Text('Login', style: TextStyle(fontSize: 18)),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.chat_bubble_outline, size: 80, color: Colors.blue),
+                  const SizedBox(height: 20),
+                  const Text('به پیام‌رسان خوش آمدید', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 30),
+                  Form(
+                    key: _formKey,
+                    child: Column(
                       children: [
-                        const Text("Don't have an account? "),
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.pushNamed(context, '/register');
-                          },
-                          child: const Text(
-                            'Register',
-                            style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
+                        TextFormField(
+                          controller: _usernameController,
+                          textDirection: TextDirection.ltr,
+                          decoration: InputDecoration(
+                            labelText: 'نام کاربری',
+                            prefixIcon: const Icon(Icons.person),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            filled: true,
+                            fillColor: Colors.grey[50],
+                          ),
+                          validator: (v) => v!.isEmpty ? 'اجباری' : null,
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: _passwordController,
+                          obscureText: _obscurePassword,
+                          textDirection: TextDirection.ltr,
+                          decoration: InputDecoration(
+                            labelText: 'رمز عبور',
+                            prefixIcon: const Icon(Icons.lock),
+                            suffixIcon: IconButton(
+                              icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
+                              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                            ),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            filled: true,
+                            fillColor: Colors.grey[50],
+                          ),
+                          validator: (v) => v!.isEmpty ? 'اجباری' : null,
+                        ),
+                        const SizedBox(height: 30),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: auth.isLoading ? null : _login,
+                            style: ElevatedButton.styleFrom(
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              backgroundColor: Colors.blue,
+                            ),
+                            child: auth.isLoading
+                                ? const CircularProgressIndicator(color: Colors.white)
+                                : const Text('ورود', style: TextStyle(fontSize: 16)),
                           ),
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text('حساب کاربری ندارید؟'),
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        onTap: () => Navigator.pushNamed(context, '/register'),
+                        child: const Text('ثبت‌نام', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),
@@ -1245,7 +1302,7 @@ class RegisterPage extends StatefulWidget {
   State<RegisterPage> createState() => _RegisterPageState();
 }
 
-class _RegisterPageState extends State<RegisterPage> with SingleTickerProviderStateMixin {
+class _RegisterPageState extends State<RegisterPage> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -1255,22 +1312,6 @@ class _RegisterPageState extends State<RegisterPage> with SingleTickerProviderSt
   final _phoneController = TextEditingController();
   final _bioController = TextEditingController();
   bool _obscurePassword = true;
-  late AnimationController _animationController;
-  late Animation<Offset> _slideAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: this,
-    );
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.5),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _animationController, curve: Curves.easeOut));
-    _animationController.forward();
-  }
 
   @override
   void dispose() {
@@ -1281,7 +1322,6 @@ class _RegisterPageState extends State<RegisterPage> with SingleTickerProviderSt
     _lastNameController.dispose();
     _phoneController.dispose();
     _bioController.dispose();
-    _animationController.dispose();
     super.dispose();
   }
 
@@ -1301,7 +1341,6 @@ class _RegisterPageState extends State<RegisterPage> with SingleTickerProviderSt
         if (mounted) Navigator.pushReplacementNamed(context, '/home');
       } else {
         String errorMsg = result?['error'] ?? 'ثبت‌نام ناموفق بود';
-        // رفع خطای null safety: استفاده از متغیر موقت برای statusCode
         final statusCode = result?['statusCode'];
         if (statusCode != null) {
           errorMsg += ' (کد خطا: $statusCode)';
@@ -1327,148 +1366,141 @@ class _RegisterPageState extends State<RegisterPage> with SingleTickerProviderSt
   Widget build(BuildContext context) {
     final auth = getIt<AuthProvider>();
     return Scaffold(
-      appBar: AppBar(title: const Text('Register')),
+      appBar: AppBar(title: const Text('ثبت‌نام')),
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.white, Color(0xFFE8F5E9)],
-          ),
-        ),
+        color: Colors.white,
         child: SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: SlideTransition(
-              position: _slideAnimation,
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  children: [
-                    const Icon(Icons.person_add, size: 60, color: Colors.green),
-                    const SizedBox(height: 20),
-                    TextFormField(
-                      controller: _usernameController,
-                      decoration: InputDecoration(
-                        labelText: 'Username *',
-                        prefixIcon: const Icon(Icons.person),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
-                        filled: true,
-                        fillColor: Colors.white,
+            padding: const EdgeInsets.all(16),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                children: [
+                  const Icon(Icons.person_add, size: 60, color: Colors.green),
+                  const SizedBox(height: 20),
+                  TextFormField(
+                    controller: _usernameController,
+                    textDirection: TextDirection.ltr,
+                    decoration: InputDecoration(
+                      labelText: 'نام کاربری *',
+                      prefixIcon: const Icon(Icons.person),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.grey[50],
+                    ),
+                    validator: (v) => v!.isEmpty ? 'اجباری' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _passwordController,
+                    obscureText: _obscurePassword,
+                    textDirection: TextDirection.ltr,
+                    decoration: InputDecoration(
+                      labelText: 'رمز عبور *',
+                      prefixIcon: const Icon(Icons.lock),
+                      suffixIcon: IconButton(
+                        icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
+                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                       ),
-                      validator: (v) => v!.isEmpty ? 'Required' : null,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.grey[50],
                     ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _passwordController,
-                      obscureText: _obscurePassword,
-                      decoration: InputDecoration(
-                        labelText: 'Password *',
-                        prefixIcon: const Icon(Icons.lock),
-                        suffixIcon: IconButton(
-                          icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
-                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                        ),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
-                        filled: true,
-                        fillColor: Colors.white,
+                    validator: (v) => v!.isEmpty ? 'اجباری' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _confirmPasswordController,
+                    obscureText: _obscurePassword,
+                    textDirection: TextDirection.ltr,
+                    decoration: InputDecoration(
+                      labelText: 'تکرار رمز عبور *',
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.grey[50],
+                    ),
+                    validator: (v) {
+                      if (v!.isEmpty) return 'اجباری';
+                      if (v != _passwordController.text) return 'رمز عبور مطابقت ندارد';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _firstNameController,
+                    decoration: InputDecoration(
+                      labelText: 'نام',
+                      prefixIcon: const Icon(Icons.badge),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.grey[50],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _lastNameController,
+                    decoration: InputDecoration(
+                      labelText: 'نام خانوادگی',
+                      prefixIcon: const Icon(Icons.badge_outlined),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.grey[50],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _phoneController,
+                    keyboardType: TextInputType.phone,
+                    textDirection: TextDirection.ltr,
+                    decoration: InputDecoration(
+                      labelText: 'شماره تلفن',
+                      prefixIcon: const Icon(Icons.phone),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.grey[50],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _bioController,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      labelText: 'درباره من',
+                      prefixIcon: const Icon(Icons.info),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: Colors.grey[50],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: auth.isLoading ? null : _register,
+                      style: ElevatedButton.styleFrom(
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        backgroundColor: Colors.green,
                       ),
-                      validator: (v) => v!.isEmpty ? 'Required' : null,
+                      child: auth.isLoading
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : const Text('ثبت‌نام', style: TextStyle(fontSize: 16)),
                     ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _confirmPasswordController,
-                      obscureText: _obscurePassword,
-                      decoration: InputDecoration(
-                        labelText: 'Confirm Password *',
-                        prefixIcon: const Icon(Icons.lock_outline),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
-                        filled: true,
-                        fillColor: Colors.white,
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text('قبلاً ثبت‌نام کرده‌اید؟'),
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: const Text('ورود', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
                       ),
-                      validator: (v) {
-                        if (v!.isEmpty) return 'Required';
-                        if (v != _passwordController.text) return 'Passwords do not match';
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _firstNameController,
-                      decoration: InputDecoration(
-                        labelText: 'First Name',
-                        prefixIcon: const Icon(Icons.badge),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _lastNameController,
-                      decoration: InputDecoration(
-                        labelText: 'Last Name',
-                        prefixIcon: const Icon(Icons.badge_outlined),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _phoneController,
-                      keyboardType: TextInputType.phone,
-                      decoration: InputDecoration(
-                        labelText: 'Phone',
-                        prefixIcon: const Icon(Icons.phone),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _bioController,
-                      maxLines: 3,
-                      decoration: InputDecoration(
-                        labelText: 'Bio',
-                        prefixIcon: const Icon(Icons.info),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 30),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: auth.isLoading ? null : _register,
-                        style: ElevatedButton.styleFrom(
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                          backgroundColor: Colors.green,
-                        ),
-                        child: auth.isLoading
-                            ? const CircularProgressIndicator(color: Colors.white)
-                            : const Text('Register', style: TextStyle(fontSize: 18)),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Text('Already have an account? '),
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: const Text(
-                            'Login',
-                            style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),
@@ -1486,13 +1518,13 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _HomePageState extends State<HomePage> {
+  int _selectedIndex = 0;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
     _loadData();
   }
 
@@ -1501,89 +1533,111 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     await chatProvider.loadChats();
   }
 
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
+  void _onItemTapped(int index) {
+    setState(() => _selectedIndex = index);
   }
 
   @override
   Widget build(BuildContext context) {
     final auth = getIt<AuthProvider>();
     final chatProvider = getIt<ChatProvider>();
+    final connectivity = getIt<ConnectivityService>();
+
     return Scaffold(
+      key: _scaffoldKey,
       appBar: AppBar(
-        title: const Text('Messenger'),
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.blue,
-          labelColor: Colors.blue,
-          unselectedLabelColor: Colors.grey,
-          tabs: const [
-            Tab(icon: Icon(Icons.chat), text: 'Chats'),
-            Tab(icon: Icon(Icons.group), text: 'Groups'),
-            Tab(icon: Icon(Icons.settings), text: 'Profile'),
-          ],
+        title: const Text('پیام‌رسان'),
+        leading: IconButton(
+          icon: const Icon(Icons.menu),
+          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
         actions: [
+          if (!connectivity.isConnected)
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Icon(Icons.signal_wifi_off, color: Colors.red),
+            ),
           IconButton(
             icon: const Icon(Icons.search),
             onPressed: () => Navigator.pushNamed(context, '/search'),
           ),
-          PopupMenuButton(
-            icon: const Icon(Icons.more_vert),
-            itemBuilder: (ctx) => [
-              const PopupMenuItem(value: 'new_group', child: Text('New Group')),
-              const PopupMenuItem(value: 'logout', child: Text('Logout')),
-            ],
-            onSelected: (value) async {
-              if (value == 'logout') {
-                await auth.logout();
-                if (mounted) Navigator.pushReplacementNamed(context, '/login');
-              } else if (value == 'new_group') {
-                _showNewGroupDialog();
-              }
-            },
-          ),
         ],
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          // Chats tab
-          RefreshIndicator(
-            onRefresh: () => chatProvider.loadChats(),
-            child: ListView.builder(
-              itemCount: chatProvider.chats.length,
-              itemBuilder: (ctx, i) {
-                final chat = chatProvider.chats[i];
-                if (chat.type == 'group' || chat.type == 'channel') return const SizedBox.shrink();
-                return ChatTile(chat: chat);
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            UserAccountsDrawerHeader(
+              accountName: Text(auth.currentUser?.displayName ?? ''),
+              accountEmail: Text(auth.currentUser?.username ?? ''),
+              currentAccountPicture: CircleAvatar(
+                backgroundImage: auth.currentUser?.avatar != null
+                    ? CachedNetworkImageProvider(auth.currentUser!.avatar!)
+                    : null,
+                child: auth.currentUser?.avatar == null ? const Icon(Icons.person) : null,
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.person),
+              title: const Text('پروفایل'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/profile');
               },
             ),
-          ),
-          // Groups tab
-          RefreshIndicator(
-            onRefresh: () => chatProvider.loadChats(),
-            child: ListView.builder(
-              itemCount: chatProvider.chats.length,
-              itemBuilder: (ctx, i) {
-                final chat = chatProvider.chats[i];
-                if (chat.type != 'group' && chat.type != 'channel') return const SizedBox.shrink();
-                return ChatTile(chat: chat);
+            ListTile(
+              leading: const Icon(Icons.archive),
+              title: const Text('آرشیو'),
+              onTap: () {
+                Navigator.pop(context);
+                // TODO: show archived chats
               },
             ),
-          ),
-          // Profile tab
+            ListTile(
+              leading: const Icon(Icons.settings),
+              title: const Text('تنظیمات'),
+              onTap: () {
+                Navigator.pop(context);
+                // TODO: settings page
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Colors.red),
+              title: const Text('خروج'),
+              onTap: () async {
+                Navigator.pop(context);
+                await auth.logout();
+                if (mounted) Navigator.pushReplacementNamed(context, '/login');
+              },
+            ),
+          ],
+        ),
+      ),
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: const [
+          ChatsTab(),
+          GroupsTab(),
           ProfileTab(),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          _showNewChatDialog();
-        },
-        child: const Icon(Icons.edit),
+      bottomNavigationBar: BottomNavigationBar(
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'گفتگوها'),
+          BottomNavigationBarItem(icon: Icon(Icons.group), label: 'گروه‌ها'),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'پروفایل'),
+        ],
+        currentIndex: _selectedIndex,
+        selectedItemColor: Colors.blue,
+        onTap: _onItemTapped,
       ),
+      floatingActionButton: _selectedIndex == 0 || _selectedIndex == 1
+          ? FloatingActionButton(
+              onPressed: _selectedIndex == 0 ? _showNewChatDialog : _showNewGroupDialog,
+              child: const Icon(Icons.edit),
+            )
+          : null,
     );
   }
 
@@ -1591,7 +1645,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('New Chat'),
+        title: const Text('گفتگوی جدید'),
         content: SizedBox(
           width: double.maxFinite,
           child: FutureBuilder<List<User>>(
@@ -1647,7 +1701,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('New Group'),
+        title: const Text('گروه جدید'),
         content: SizedBox(
           width: double.maxFinite,
           child: Column(
@@ -1655,7 +1709,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
             children: [
               TextField(
                 controller: titleController,
-                decoration: const InputDecoration(labelText: 'Group Name'),
+                decoration: const InputDecoration(labelText: 'نام گروه'),
               ),
               const SizedBox(height: 10),
               Expanded(
@@ -1702,7 +1756,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+            child: const Text('لغو'),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -1718,9 +1772,49 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 }
               }
             },
-            child: const Text('Create'),
+            child: const Text('ایجاد'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class ChatsTab extends StatelessWidget {
+  const ChatsTab({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final chatProvider = getIt<ChatProvider>();
+    return RefreshIndicator(
+      onRefresh: () => chatProvider.loadChats(),
+      child: ListView.builder(
+        itemCount: chatProvider.chats.length,
+        itemBuilder: (ctx, i) {
+          final chat = chatProvider.chats[i];
+          if (chat.type == 'group' || chat.type == 'channel') return const SizedBox.shrink();
+          return ChatTile(chat: chat);
+        },
+      ),
+    );
+  }
+}
+
+class GroupsTab extends StatelessWidget {
+  const GroupsTab({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final chatProvider = getIt<ChatProvider>();
+    return RefreshIndicator(
+      onRefresh: () => chatProvider.loadChats(),
+      child: ListView.builder(
+        itemCount: chatProvider.chats.length,
+        itemBuilder: (ctx, i) {
+          final chat = chatProvider.chats[i];
+          if (chat.type != 'group' && chat.type != 'channel') return const SizedBox.shrink();
+          return ChatTile(chat: chat);
+        },
       ),
     );
   }
@@ -1747,14 +1841,14 @@ class ChatTile extends StatelessWidget {
             Stack(
               children: [
                 CircleAvatar(
-                  radius: 30,
+                  radius: 28,
                   backgroundImage: chat.avatar != null
                       ? CachedNetworkImageProvider(chat.avatar!)
                       : (chat.type == 'private' && chat.otherUser?.avatar != null
                           ? CachedNetworkImageProvider(chat.otherUser!.avatar!)
                           : null),
                   child: (chat.avatar == null && (chat.type != 'private' || chat.otherUser?.avatar == null))
-                      ? Icon(chat.type == 'private' ? Icons.person : Icons.group, size: 30)
+                      ? Icon(chat.type == 'private' ? Icons.person : Icons.group, size: 28)
                       : null,
                 ),
                 if (chat.type == 'private' && chat.otherUser != null && chat.otherUser!.isOnline)
@@ -1762,8 +1856,8 @@ class ChatTile extends StatelessWidget {
                     right: 0,
                     bottom: 0,
                     child: Container(
-                      width: 14,
-                      height: 14,
+                      width: 12,
+                      height: 12,
                       decoration: BoxDecoration(
                         color: Colors.green,
                         shape: BoxShape.circle,
@@ -1780,12 +1874,12 @@ class ChatTile extends StatelessWidget {
                 children: [
                   Text(
                     chat.displayTitle,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
                   ),
                   const SizedBox(height: 4),
                   if (chat.lastMessage != null)
                     Text(
-                      chat.lastMessage!.text ?? (chat.lastMessage!.mediaType != null ? '📷 Media' : ''),
+                      chat.lastMessage!.text ?? (chat.lastMessage!.mediaType != null ? '📷 رسانه' : ''),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: Colors.grey),
@@ -1804,8 +1898,8 @@ class ChatTile extends StatelessWidget {
                 const SizedBox(height: 4),
                 if (chat.lastMessage != null && !(chat.lastMessage!.readBy.contains(auth.currentUser?.id)))
                   Container(
-                    width: 10,
-                    height: 10,
+                    width: 8,
+                    height: 8,
                     decoration: const BoxDecoration(
                       color: Colors.blue,
                       shape: BoxShape.circle,
@@ -1821,6 +1915,8 @@ class ChatTile extends StatelessWidget {
 }
 
 class ProfileTab extends StatelessWidget {
+  const ProfileTab({super.key});
+
   @override
   Widget build(BuildContext context) {
     final auth = getIt<AuthProvider>();
@@ -1833,18 +1929,18 @@ class ProfileTab extends StatelessWidget {
           child: Stack(
             children: [
               CircleAvatar(
-                radius: 60,
+                radius: 50,
                 backgroundImage: user.avatar != null ? CachedNetworkImageProvider(user.avatar!) : null,
-                child: user.avatar == null ? const Icon(Icons.person, size: 60) : null,
+                child: user.avatar == null ? const Icon(Icons.person, size: 50) : null,
               ),
               Positioned(
                 bottom: 0,
                 right: 0,
                 child: CircleAvatar(
                   backgroundColor: Colors.blue,
-                  radius: 18,
+                  radius: 16,
                   child: IconButton(
-                    icon: const Icon(Icons.camera_alt, size: 16, color: Colors.white),
+                    icon: const Icon(Icons.camera_alt, size: 14, color: Colors.white),
                     onPressed: () {
                       // Change avatar
                     },
@@ -1881,7 +1977,8 @@ class ProfileTab extends StatelessWidget {
           onPressed: () {
             Navigator.pushNamed(context, '/profile');
           },
-          child: const Text('Edit Profile'),
+          style: ElevatedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+          child: const Text('ویرایش پروفایل'),
         ),
       ],
     );
@@ -1896,7 +1993,7 @@ class ChatPage extends StatefulWidget {
   State<ChatPage> createState() => _ChatPageState();
 }
 
-class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, TickerProviderStateMixin {
+class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   late Chat chat;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -1907,8 +2004,8 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
   int? _replyToId;
   Timer? _typingTimer;
   bool _isTyping = false;
-  late AnimationController _fabAnimationController;
-  late Animation<double> _fabAnimation;
+  double _sendProgress = 0.0;
+  bool _showProgress = false;
 
   @override
   void initState() {
@@ -1916,51 +2013,41 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
     WidgetsBinding.instance.addObserver(this);
     chat = ModalRoute.of(context)!.settings.arguments as Chat;
     getIt<MessageProvider>().loadMessages(chat.id);
-    _focusNode.addListener(_onFocusChange);
-    _fabAnimationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-    _fabAnimation = CurvedAnimation(parent: _fabAnimationController, curve: Curves.easeInOut);
-    _fabAnimationController.forward();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      // reconnect?
-    }
-  }
-
-  void _onFocusChange() {
-    if (_focusNode.hasFocus) {
-      _fabAnimationController.reverse();
-    } else {
-      _fabAnimationController.forward();
-    }
+    // reconnect handled by socket service
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
     _messageController.dispose();
     _scrollController.dispose();
     _typingTimer?.cancel();
-    _fabAnimationController.dispose();
     super.dispose();
   }
 
   void _sendMessage() async {
     if (_messageController.text.trim().isEmpty && _selectedMedia == null) return;
-    setState(() => _isSending = true);
+    setState(() {
+      _isSending = true;
+      _showProgress = _selectedMedia != null;
+      _sendProgress = 0.0;
+    });
     final msgProvider = getIt<MessageProvider>();
     await msgProvider.sendMessage(
       chat.id,
       _messageController.text,
       replyTo: _replyToId,
       mediaFile: _selectedMedia,
+      onSendProgress: (count, total) {
+        setState(() {
+          _sendProgress = count / total;
+        });
+      },
     );
     _messageController.clear();
     setState(() {
@@ -1968,6 +2055,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
       _mediaPreviewPath = null;
       _replyToId = null;
       _isSending = false;
+      _showProgress = false;
     });
     _scrollToBottom();
   }
@@ -1976,7 +2064,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
         0,
-        duration: const Duration(milliseconds: 300),
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
     }
@@ -1997,72 +2085,60 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
   }
 
   Future<void> _pickMedia() async {
-    final picker = ImagePicker();
-    showModalBottomSheet(
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (ctx) => SafeArea(
         child: Wrap(
           children: [
             ListTile(
-              leading: const Icon(Icons.photo),
-              title: const Text('Camera'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                final picked = await picker.pickImage(source: ImageSource.camera);
-                if (picked != null) {
-                  setState(() {
-                    _selectedMedia = File(picked.path);
-                    _mediaPreviewPath = picked.path;
-                  });
-                }
-              },
+              leading: const Icon(Icons.photo_camera),
+              title: const Text('دوربین'),
+              onTap: () => Navigator.pop(ctx, {'source': 'camera'}),
             ),
             ListTile(
               leading: const Icon(Icons.photo_library),
-              title: const Text('Gallery'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                final picked = await picker.pickImage(source: ImageSource.gallery);
-                if (picked != null) {
-                  setState(() {
-                    _selectedMedia = File(picked.path);
-                    _mediaPreviewPath = picked.path;
-                  });
-                }
-              },
+              title: const Text('گالری'),
+              onTap: () => Navigator.pop(ctx, {'source': 'gallery'}),
             ),
             ListTile(
-              leading: const Icon(Icons.video_library),
-              title: const Text('Video'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                final picked = await picker.pickVideo(source: ImageSource.gallery);
-                if (picked != null) {
-                  setState(() {
-                    _selectedMedia = File(picked.path);
-                    _mediaPreviewPath = picked.path;
-                  });
-                }
-              },
+              leading: const Icon(Icons.videocam),
+              title: const Text('ویدیو'),
+              onTap: () => Navigator.pop(ctx, {'source': 'video'}),
             ),
             ListTile(
               leading: const Icon(Icons.insert_drive_file),
-              title: const Text('File'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                final result = await FilePicker.platform.pickFiles();
-                if (result != null) {
-                  setState(() {
-                    _selectedMedia = File(result.files.single.path!);
-                    _mediaPreviewPath = result.files.single.path;
-                  });
-                }
-              },
+              title: const Text('فایل'),
+              onTap: () => Navigator.pop(ctx, {'source': 'file'}),
             ),
           ],
         ),
       ),
     );
+    if (result == null) return;
+    final picker = ImagePicker();
+    File? file;
+    if (result['source'] == 'camera') {
+      final picked = await picker.pickImage(source: ImageSource.camera);
+      if (picked != null) file = File(picked.path);
+    } else if (result['source'] == 'gallery') {
+      final picked = await picker.pickImage(source: ImageSource.gallery);
+      if (picked != null) file = File(picked.path);
+    } else if (result['source'] == 'video') {
+      final picked = await picker.pickVideo(source: ImageSource.gallery);
+      if (picked != null) file = File(picked.path);
+    } else if (result['source'] == 'file') {
+      final picked = await FilePicker.platform.pickFiles();
+      if (picked != null) file = File(picked.files.single.path!);
+    }
+    if (file != null) {
+      setState(() {
+        _selectedMedia = file;
+        _mediaPreviewPath = file.path;
+      });
+    }
   }
 
   @override
@@ -2092,14 +2168,14 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
               Hero(
                 tag: 'chat_avatar_${chat.id}',
                 child: CircleAvatar(
-                  radius: 20,
+                  radius: 18,
                   backgroundImage: chat.avatar != null
                       ? CachedNetworkImageProvider(chat.avatar!)
                       : (chat.type == 'private' && chat.otherUser?.avatar != null
                           ? CachedNetworkImageProvider(chat.otherUser!.avatar!)
                           : null),
                   child: (chat.avatar == null && (chat.type != 'private' || chat.otherUser?.avatar == null))
-                      ? Icon(chat.type == 'private' ? Icons.person : Icons.group, size: 20)
+                      ? Icon(chat.type == 'private' ? Icons.person : Icons.group, size: 18)
                       : null,
                 ),
               ),
@@ -2110,17 +2186,17 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
                   children: [
                     Text(
                       chat.displayTitle,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                     ),
                     if (typingUsers.isNotEmpty)
                       Text(
-                        '${typingUsers.join(', ')} typing...',
-                        style: const TextStyle(fontSize: 12, color: Colors.green),
+                        '${typingUsers.join(', ')} در حال تایپ...',
+                        style: const TextStyle(fontSize: 10, color: Colors.green),
                       )
                     else if (chat.type == 'private' && chat.otherUser != null)
                       Text(
-                        chat.otherUser!.isOnline ? 'Online' : 'Last seen ${_formatLastSeen(chat.otherUser!.lastSeen)}',
-                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                        chat.otherUser!.isOnline ? 'آنلاین' : 'آخرین بازدید ${_formatLastSeen(chat.otherUser!.lastSeen)}',
+                        style: const TextStyle(fontSize: 10, color: Colors.grey),
                       ),
                   ],
                 ),
@@ -2142,44 +2218,48 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
           Expanded(
             child: msgProvider.isLoading(chat.id) && messages.isEmpty
                 ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    reverse: true,
-                    controller: _scrollController,
-                    itemCount: messages.length,
-                    itemBuilder: (ctx, i) {
-                      final msg = messages[i];
-                      final isMe = msg.sender.id == auth.currentUser?.id;
-                      return MessageBubble(
-                        message: msg,
-                        isMe: isMe,
-                        chat: chat,
-                        onReply: () {
-                          setState(() {
-                            _replyToId = msg.id;
-                          });
-                        },
-                        onReact: (emoji) {
-                          if (msg.reactions.any((r) => r.userId == auth.currentUser?.id)) {
-                            msgProvider.removeReaction(msg.id);
-                          } else {
-                            msgProvider.addReaction(msg.id, emoji);
-                          }
-                        },
-                        onDelete: () {
-                          msgProvider.deleteMessageApi(msg.id);
-                        },
-                        onEdit: (newText) {
-                          msgProvider.editMessage(msg.id, newText);
-                        },
-                        onForward: () {
-                          _showForwardDialog(msg);
-                        },
-                        onPin: () {
-                          if (msg.pinned) {
-                            msgProvider.unpinMessageApi(chat.id);
-                          } else {
-                            msgProvider.pinMessage(chat.id, msg.id);
-                          }
+                : LayoutBuilder(
+                    builder: (ctx, constraints) {
+                      return ListView.builder(
+                        reverse: true,
+                        controller: _scrollController,
+                        itemCount: messages.length,
+                        itemBuilder: (ctx, i) {
+                          final msg = messages[i];
+                          final isMe = msg.sender.id == auth.currentUser?.id;
+                          return MessageBubble(
+                            message: msg,
+                            isMe: isMe,
+                            chat: chat,
+                            onReply: () {
+                              setState(() {
+                                _replyToId = msg.id;
+                              });
+                            },
+                            onReact: (emoji) {
+                              if (msg.reactions.any((r) => r.userId == auth.currentUser?.id)) {
+                                msgProvider.removeReaction(msg.id);
+                              } else {
+                                msgProvider.addReaction(msg.id, emoji);
+                              }
+                            },
+                            onDelete: () {
+                              msgProvider.deleteMessageApi(msg.id);
+                            },
+                            onEdit: (newText) {
+                              msgProvider.editMessage(msg.id, newText);
+                            },
+                            onForward: () {
+                              _showForwardDialog(msg);
+                            },
+                            onPin: () {
+                              if (msg.pinned) {
+                                msgProvider.unpinMessageApi(chat.id);
+                              } else {
+                                msgProvider.pinMessage(chat.id, msg.id);
+                              }
+                            },
+                          );
                         },
                       );
                     },
@@ -2187,18 +2267,18 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
           ),
           if (_replyToId != null)
             Container(
-              color: Colors.grey[200],
+              color: Colors.grey[100],
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
                 children: [
                   Expanded(
                     child: Text(
-                      'Replying...',
-                      style: const TextStyle(fontStyle: FontStyle.italic),
+                      'در حال پاسخ...',
+                      style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, size: 18),
+                    icon: const Icon(Icons.close, size: 16),
                     onPressed: () => setState(() => _replyToId = null),
                   ),
                 ],
@@ -2206,33 +2286,37 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
             ),
           if (_selectedMedia != null)
             Container(
-              height: 80,
-              color: Colors.grey[100],
+              height: 70,
+              color: Colors.grey[50],
               padding: const EdgeInsets.all(8),
               child: Row(
                 children: [
-                  Expanded(
-                    child: Stack(
-                      children: [
-                        if (_mediaPreviewPath != null)
-                          Image.file(File(_mediaPreviewPath!), height: 60, width: 60, fit: BoxFit.cover),
-                        Positioned(
-                          top: 0,
-                          right: 0,
-                          child: IconButton(
-                            icon: const Icon(Icons.cancel, size: 18),
-                            onPressed: () => setState(() {
-                              _selectedMedia = null;
-                              _mediaPreviewPath = null;
-                            }),
-                          ),
+                  Stack(
+                    children: [
+                      if (_mediaPreviewPath != null)
+                        Image.file(File(_mediaPreviewPath!), height: 50, width: 50, fit: BoxFit.cover),
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: IconButton(
+                          icon: const Icon(Icons.cancel, size: 16),
+                          onPressed: () => setState(() {
+                            _selectedMedia = null;
+                            _mediaPreviewPath = null;
+                          }),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(_selectedMedia!.path.split('/').last, overflow: TextOverflow.ellipsis),
                   ),
                 ],
               ),
             ),
+          if (_showProgress)
+            LinearProgressIndicator(value: _sendProgress, backgroundColor: Colors.grey[200]),
           Container(
             color: Colors.white,
             padding: EdgeInsets.only(
@@ -2252,16 +2336,17 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
                     focusNode: _focusNode,
                     onChanged: _handleTyping,
                     decoration: const InputDecoration(
-                      hintText: 'Message...',
+                      hintText: 'پیام...',
                       border: InputBorder.none,
                     ),
                     maxLines: null,
+                    textDirection: TextDirection.rtl,
                   ),
                 ),
                 if (_isSending)
                   const Padding(
                     padding: EdgeInsets.all(8.0),
-                    child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2)),
+                    child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
                   )
                 else
                   IconButton(
@@ -2273,8 +2358,8 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
           ),
         ],
       ),
-      floatingActionButton: ScaleTransition(
-        scale: _fabAnimation,
+      floatingActionButton: Visibility(
+        visible: _scrollController.hasClients && _scrollController.position.pixels > 100,
         child: FloatingActionButton.small(
           onPressed: _scrollToBottom,
           child: const Icon(Icons.arrow_downward),
@@ -2284,12 +2369,12 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
   }
 
   String _formatLastSeen(DateTime? lastSeen) {
-    if (lastSeen == null) return 'recently';
+    if (lastSeen == null) return 'به تازگی';
     final now = DateTime.now();
     final diff = now.difference(lastSeen);
-    if (diff.inMinutes < 1) return 'just now';
-    if (diff.inHours < 1) return '${diff.inMinutes} min ago';
-    if (diff.inDays < 1) return '${diff.inHours} h ago';
+    if (diff.inMinutes < 1) return 'هم اکنون';
+    if (diff.inHours < 1) return '${diff.inMinutes} دقیقه پیش';
+    if (diff.inDays < 1) return '${diff.inHours} ساعت پیش';
     return DateFormat('MMM d').format(lastSeen);
   }
 
@@ -2299,7 +2384,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver, Ticker
       builder: (ctx) {
         final chatProvider = getIt<ChatProvider>();
         return AlertDialog(
-          title: const Text('Forward to'),
+          title: const Text('ارسال به'),
           content: SizedBox(
             width: double.maxFinite,
             child: ListView.builder(
@@ -2355,49 +2440,14 @@ class MessageBubble extends StatefulWidget {
   State<MessageBubble> createState() => _MessageBubbleState();
 }
 
-class _MessageBubbleState extends State<MessageBubble> with TickerProviderStateMixin {
+class _MessageBubbleState extends State<MessageBubble> {
   bool _showReactions = false;
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 200),
-    );
-    _scaleAnimation = CurvedAnimation(parent: _controller, curve: Curves.elasticOut);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _toggleReactions() {
-    if (_showReactions) {
-      _controller.reverse();
-      Future.delayed(const Duration(milliseconds: 200), () {
-        setState(() => _showReactions = false);
-      });
-    } else {
-      setState(() => _showReactions = true);
-      _controller.forward();
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     final reactions = widget.message.reactions;
-    final myReaction = reactions.firstWhere(
-      (r) => r.userId == getIt<AuthProvider>().currentUser?.id,
-      orElse: () => Reaction(userId: 0, emoji: '', createdAt: DateTime.now()),
-    );
-    final hasMyReaction = myReaction.emoji.isNotEmpty;
     return GestureDetector(
-      onLongPress: _toggleReactions,
+      onLongPress: () => setState(() => _showReactions = !_showReactions),
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
         child: Row(
@@ -2406,7 +2456,7 @@ class _MessageBubbleState extends State<MessageBubble> with TickerProviderStateM
           children: [
             if (!widget.isMe)
               CircleAvatar(
-                radius: 16,
+                radius: 14,
                 backgroundImage: widget.message.sender.avatar != null
                     ? CachedNetworkImageProvider(widget.message.sender.avatar!)
                     : null,
@@ -2420,10 +2470,10 @@ class _MessageBubbleState extends State<MessageBubble> with TickerProviderStateM
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: widget.isMe ? Colors.blue[100] : Colors.grey[200],
-                      borderRadius: BorderRadius.circular(18).copyWith(
-                        bottomLeft: widget.isMe ? const Radius.circular(18) : Radius.zero,
-                        bottomRight: widget.isMe ? Radius.zero : const Radius.circular(18),
+                      color: widget.isMe ? Colors.blue[50] : Colors.grey[100],
+                      borderRadius: BorderRadius.circular(16).copyWith(
+                        bottomLeft: widget.isMe ? const Radius.circular(16) : Radius.zero,
+                        bottomRight: widget.isMe ? Radius.zero : const Radius.circular(16),
                       ),
                     ),
                     child: Column(
@@ -2432,20 +2482,20 @@ class _MessageBubbleState extends State<MessageBubble> with TickerProviderStateM
                         if (!widget.isMe)
                           Text(
                             widget.message.sender.displayName,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                            style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12),
                           ),
                         if (widget.message.replyToId != null)
-                          const Text('Replying...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                          const Text('پاسخ...', style: TextStyle(fontSize: 11, color: Colors.grey)),
                         if (widget.message.media != null)
                           GestureDetector(
                             onTap: () {
                               // Show full media
                             },
                             child: Container(
-                              width: 200,
-                              height: 150,
+                              width: 150,
+                              height: 100,
                               decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(8),
                                 image: DecorationImage(
                                   image: CachedNetworkImageProvider(widget.message.media!),
                                   fit: BoxFit.cover,
@@ -2460,13 +2510,13 @@ class _MessageBubbleState extends State<MessageBubble> with TickerProviderStateM
                           ),
                         if (widget.message.editedAt != null)
                           const Text(
-                            'edited',
-                            style: TextStyle(fontSize: 10, color: Colors.grey),
+                            'ویرایش شده',
+                            style: TextStyle(fontSize: 9, color: Colors.grey),
                           ),
                         if (reactions.isNotEmpty)
                           Wrap(
-                            spacing: 4,
-                            children: reactions.map((r) => Text(r.emoji)).toList(),
+                            spacing: 2,
+                            children: reactions.map((r) => Text(r.emoji, style: const TextStyle(fontSize: 12))).toList(),
                           ),
                       ],
                     ),
@@ -2476,71 +2526,39 @@ class _MessageBubbleState extends State<MessageBubble> with TickerProviderStateM
                       top: -30,
                       left: widget.isMe ? null : 0,
                       right: widget.isMe ? 0 : null,
-                      child: ScaleTransition(
-                        scale: _scaleAnimation,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
-                                blurRadius: 8,
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _ReactionButton(emoji: '👍', onTap: () {
-                                widget.onReact('👍');
-                                _toggleReactions();
-                              }),
-                              _ReactionButton(emoji: '❤️', onTap: () {
-                                widget.onReact('❤️');
-                                _toggleReactions();
-                              }),
-                              _ReactionButton(emoji: '😂', onTap: () {
-                                widget.onReact('😂');
-                                _toggleReactions();
-                              }),
-                              _ReactionButton(emoji: '😮', onTap: () {
-                                widget.onReact('😮');
-                                _toggleReactions();
-                              }),
-                              _ReactionButton(emoji: '😢', onTap: () {
-                                widget.onReact('😢');
-                                _toggleReactions();
-                              }),
-                              _ReactionButton(emoji: '😡', onTap: () {
-                                widget.onReact('😡');
-                                _toggleReactions();
-                              }),
-                              PopupMenuButton(
-                                icon: const Icon(Icons.more_horiz, size: 16),
-                                itemBuilder: (ctx) => [
-                                  const PopupMenuItem(value: 'reply', child: Text('Reply')),
-                                  if (widget.isMe)
-                                    const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                                  if (widget.isMe)
-                                    const PopupMenuItem(value: 'delete', child: Text('Delete')),
-                                  const PopupMenuItem(value: 'forward', child: Text('Forward')),
-                                  PopupMenuItem(
-                                    value: 'pin',
-                                    child: Text(widget.message.pinned ? 'Unpin' : 'Pin'),
-                                  ),
-                                ],
-                                onSelected: (value) {
-                                  if (value == 'reply') widget.onReply();
-                                  if (value == 'edit') _showEditDialog();
-                                  if (value == 'delete') widget.onDelete();
-                                  if (value == 'forward') widget.onForward();
-                                  if (value == 'pin') widget.onPin();
-                                },
-                              ),
-                            ],
-                          ),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _ReactionButton(emoji: '👍', onTap: () { widget.onReact('👍'); setState(() => _showReactions = false); }),
+                            _ReactionButton(emoji: '❤️', onTap: () { widget.onReact('❤️'); setState(() => _showReactions = false); }),
+                            _ReactionButton(emoji: '😂', onTap: () { widget.onReact('😂'); setState(() => _showReactions = false); }),
+                            _ReactionButton(emoji: '😮', onTap: () { widget.onReact('😮'); setState(() => _showReactions = false); }),
+                            PopupMenuButton(
+                              icon: const Icon(Icons.more_horiz, size: 16),
+                              itemBuilder: (ctx) => [
+                                const PopupMenuItem(value: 'reply', child: Text('پاسخ')),
+                                if (widget.isMe) const PopupMenuItem(value: 'edit', child: Text('ویرایش')),
+                                if (widget.isMe) const PopupMenuItem(value: 'delete', child: Text('حذف')),
+                                const PopupMenuItem(value: 'forward', child: Text('ارسال')),
+                                PopupMenuItem(value: 'pin', child: Text(widget.message.pinned ? 'لغو پین' : 'پین')),
+                              ],
+                              onSelected: (value) {
+                                setState(() => _showReactions = false);
+                                if (value == 'reply') widget.onReply();
+                                if (value == 'edit') _showEditDialog();
+                                if (value == 'delete') widget.onDelete();
+                                if (value == 'forward') widget.onForward();
+                                if (value == 'pin') widget.onPin();
+                              },
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -2550,7 +2568,7 @@ class _MessageBubbleState extends State<MessageBubble> with TickerProviderStateM
             const SizedBox(width: 4),
             if (widget.isMe)
               CircleAvatar(
-                radius: 16,
+                radius: 14,
                 backgroundImage: widget.message.sender.avatar != null
                     ? CachedNetworkImageProvider(widget.message.sender.avatar!)
                     : null,
@@ -2567,16 +2585,16 @@ class _MessageBubbleState extends State<MessageBubble> with TickerProviderStateM
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Edit Message'),
+        title: const Text('ویرایش پیام'),
         content: TextField(controller: controller, autofocus: true),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('لغو')),
           ElevatedButton(
             onPressed: () {
               widget.onEdit(controller.text);
               Navigator.pop(ctx);
             },
-            child: const Text('Save'),
+            child: const Text('ذخیره'),
           ),
         ],
       ),
@@ -2594,8 +2612,8 @@ class _ReactionButton extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.all(6),
-        child: Text(emoji, style: const TextStyle(fontSize: 20)),
+        padding: const EdgeInsets.all(4),
+        child: Text(emoji, style: const TextStyle(fontSize: 18)),
       ),
     );
   }
@@ -2625,12 +2643,11 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
   @override
   Widget build(BuildContext context) {
     final auth = getIt<AuthProvider>();
-    final isAdmin = chat.createdBy == auth.currentUser?.id ||
-        chat.participants.any((p) => p.id == auth.currentUser?.id && false); // need role info, but we don't have role in model. We'll skip.
+    final isAdmin = chat.createdBy == auth.currentUser?.id;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Chat Info'),
+        title: const Text('اطلاعات گفتگو'),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -2641,14 +2658,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                 Hero(
                   tag: 'chat_avatar_${chat.id}',
                   child: CircleAvatar(
-                    radius: 60,
+                    radius: 50,
                     backgroundImage: chat.avatar != null
                         ? CachedNetworkImageProvider(chat.avatar!)
                         : (chat.type == 'private' && chat.otherUser?.avatar != null
                             ? CachedNetworkImageProvider(chat.otherUser!.avatar!)
                             : null),
                     child: (chat.avatar == null && (chat.type != 'private' || chat.otherUser?.avatar == null))
-                        ? Icon(chat.type == 'private' ? Icons.person : Icons.group, size: 60)
+                        ? Icon(chat.type == 'private' ? Icons.person : Icons.group, size: 50)
                         : null,
                   ),
                 ),
@@ -2658,8 +2675,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                     right: 0,
                     child: CircleAvatar(
                       backgroundColor: Colors.blue,
+                      radius: 16,
                       child: IconButton(
-                        icon: const Icon(Icons.camera_alt, size: 20, color: Colors.white),
+                        icon: const Icon(Icons.camera_alt, size: 14, color: Colors.white),
                         onPressed: () {
                           // Change chat avatar
                         },
@@ -2678,13 +2696,13 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                   children: [
                     TextFormField(
                       controller: _titleController,
-                      decoration: const InputDecoration(labelText: 'Group Name'),
+                      decoration: const InputDecoration(labelText: 'نام گروه'),
                       enabled: isAdmin,
                     ),
                     const SizedBox(height: 10),
                     TextFormField(
                       controller: _descController,
-                      decoration: const InputDecoration(labelText: 'Description'),
+                      decoration: const InputDecoration(labelText: 'توضیحات'),
                       maxLines: 3,
                       enabled: isAdmin,
                     ),
@@ -2695,7 +2713,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           onPressed: () {
                             getIt<ChatProvider>().updateChatInfo(chat.id, title: _titleController.text, description: _descController.text);
                           },
-                          child: const Text('Update'),
+                          child: const Text('به‌روزرسانی'),
                         ),
                       ),
                   ],
@@ -2710,7 +2728,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                 Padding(
                   padding: const EdgeInsets.all(16),
                   child: Text(
-                    'Participants (${chat.participants.length})',
+                    'شرکت‌کنندگان (${chat.participants.length})',
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                 ),
@@ -2729,7 +2747,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                 if (isAdmin && chat.type != 'private')
                   ListTile(
                     leading: const Icon(Icons.person_add),
-                    title: const Text('Add Participant'),
+                    title: const Text('افزودن شرکت‌کننده'),
                     onTap: _addParticipant,
                   ),
               ],
@@ -2739,7 +2757,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
             Card(
               child: ListTile(
                 leading: const Icon(Icons.archive),
-                title: const Text('Archive Chat'),
+                title: const Text('بایگانی گفتگو'),
                 onTap: () {
                   getIt<ChatProvider>().archiveChatManually(chat.id);
                   Navigator.pop(context);
@@ -2756,7 +2774,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Add Participant'),
+        title: const Text('افزودن شرکت‌کننده'),
         content: SizedBox(
           width: double.maxFinite,
           child: ListView.builder(
@@ -2827,7 +2845,7 @@ class _SearchPageState extends State<SearchPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Search'),
+        title: const Text('جستجو'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -2836,12 +2854,12 @@ class _SearchPageState extends State<SearchPage> {
             TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search messages...',
+                hintText: 'جستجوی پیام‌ها...',
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.search),
                   onPressed: _search,
                 ),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onSubmitted: (_) => _search(),
             ),
@@ -2859,7 +2877,7 @@ class _SearchPageState extends State<SearchPage> {
                         backgroundImage: msg.sender.avatar != null ? CachedNetworkImageProvider(msg.sender.avatar!) : null,
                         child: msg.sender.avatar == null ? Text(msg.sender.username[0]) : null,
                       ),
-                      title: Text(msg.text ?? 'Media'),
+                      title: Text(msg.text ?? 'رسانه'),
                       subtitle: Text(msg.sender.displayName),
                       onTap: () {
                         // Navigate to chat
@@ -2927,7 +2945,7 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Edit Profile'),
+        title: const Text('ویرایش پروفایل'),
         actions: [
           if (_isSaving)
             const Padding(
@@ -2949,23 +2967,23 @@ class _ProfilePageState extends State<ProfilePage> {
             children: [
               TextFormField(
                 controller: _firstNameController,
-                decoration: const InputDecoration(labelText: 'First Name'),
+                decoration: const InputDecoration(labelText: 'نام'),
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _lastNameController,
-                decoration: const InputDecoration(labelText: 'Last Name'),
+                decoration: const InputDecoration(labelText: 'نام خانوادگی'),
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _phoneController,
-                decoration: const InputDecoration(labelText: 'Phone'),
+                decoration: const InputDecoration(labelText: 'شماره تلفن'),
                 keyboardType: TextInputType.phone,
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _bioController,
-                decoration: const InputDecoration(labelText: 'Bio'),
+                decoration: const InputDecoration(labelText: 'درباره من'),
                 maxLines: 3,
               ),
             ],
