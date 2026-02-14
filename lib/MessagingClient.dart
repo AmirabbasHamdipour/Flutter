@@ -360,7 +360,6 @@ class MessagingClient {
     } else {
       final client = http.Client();
       try {
-        // ایجاد درخواست و اختصاص body فقط در صورت غیر null بودن
         final httpRequest = http.Request(method, url)
           ..headers.addAll(requestHeaders);
         if (body != null) {
@@ -385,6 +384,46 @@ class MessagingClient {
     return responseBody is Map<String, dynamic> ? responseBody : {};
   }
 
+  // Helper for list responses that might be direct list or map with a key
+  List<T> _parseListResponse<T>(
+    dynamic data,
+    T Function(Map<String, dynamic>) fromJson, {
+    String key = 'items',
+  }) {
+    if (data is List) {
+      return data.map((e) => fromJson(e as Map<String, dynamic>)).toList();
+    } else if (data is Map<String, dynamic>) {
+      if (data.containsKey('error')) {
+        throw ApiException(data['error'] as String, 200);
+      }
+      // Try to extract list from known keys
+      if (data.containsKey('users') && data['users'] is List) {
+        return (data['users'] as List)
+            .map((e) => fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      if (data.containsKey('chats') && data['chats'] is List) {
+        return (data['chats'] as List)
+            .map((e) => fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      if (data.containsKey('messages') && data['messages'] is List) {
+        return (data['messages'] as List)
+            .map((e) => fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      if (data.containsKey('forwarded') && data['forwarded'] is List) {
+        return (data['forwarded'] as List)
+            .map((e) => fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      // If it's a map but contains no list key, maybe it's a single item wrapped? but we expect list.
+      throw ApiException('Unexpected response format: $data', 200);
+    } else {
+      throw ApiException('Unexpected response type', 200);
+    }
+  }
+
   // --------------------------------------------------------------------
   // Auth
   // --------------------------------------------------------------------
@@ -406,7 +445,7 @@ class MessagingClient {
       if (lastName != null) 'last_name': lastName,
       if (bio != null) 'bio': bio,
     });
-    // Response: { "user": {...} }
+    // Response: { "user": {...} } or { "message": "...", "user": {...} }
     final userJson = data['user'] as Map<String, dynamic>;
     _currentUser = User.fromJson(userJson);
     // No token from register (should login after). So we don't set _token.
@@ -432,7 +471,7 @@ class MessagingClient {
   /// Get all users (requires auth).
   Future<List<User>> getUsers() async {
     final data = await _request('GET', '/users');
-    return (data as List).map((e) => User.fromJson(e as Map<String, dynamic>)).toList();
+    return _parseListResponse<User>(data, User.fromJson, key: 'users');
   }
 
   /// Get a single user by id.
@@ -500,9 +539,11 @@ class MessagingClient {
   /// Get all chats for current user.
   Future<List<Chat>> getMyChats() async {
     final data = await _request('GET', '/chats');
-    return (data as List)
-        .map((e) => Chat.fromJson(e as Map<String, dynamic>, currentUserId: _currentUser?.id))
-        .toList();
+    return _parseListResponse<Chat>(
+      data,
+      (json) => Chat.fromJson(json, currentUserId: _currentUser?.id),
+      key: 'chats',
+    );
   }
 
   /// Create a new chat.
@@ -579,7 +620,7 @@ class MessagingClient {
   /// Get messages from a chat (paginated).
   Future<List<Message>> getMessages(int chatId, {int limit = 50, int offset = 0}) async {
     final data = await _request('GET', '/chats/$chatId/messages?limit=$limit&offset=$offset');
-    return (data as List).map((e) => Message.fromJson(e as Map<String, dynamic>)).toList();
+    return _parseListResponse<Message>(data, Message.fromJson, key: 'messages');
   }
 
   /// Send a message (text + optional media).
@@ -684,7 +725,7 @@ class MessagingClient {
   Future<List<Message>> searchMessages(String query, {int? chatId}) async {
     final path = '/search/messages?q=${Uri.encodeQueryComponent(query)}${chatId != null ? '&chat_id=$chatId' : ''}';
     final data = await _request('GET', path);
-    return (data as List).map((e) => Message.fromJson(e as Map<String, dynamic>)).toList();
+    return _parseListResponse<Message>(data, Message.fromJson, key: 'messages');
   }
 
   // --------------------------------------------------------------------
@@ -725,15 +766,14 @@ class MessagingClient {
       socketUrl,
       io.OptionBuilder()
           .setTransports(['websocket']) // force websocket
-          .setExtraHeaders({'Authorization': 'Bearer $_token'}) // not used by server? server uses query param
-          .setQuery({'token': _token!}) // token as query parameter
+          .setExtraHeaders({'Authorization': 'Bearer $_token'})
+          .setQuery({'token': _token!})
           .enableReconnection() // auto reconnect (اصلاح شده)
           .build(),
     );
 
     _socket!.onConnect((_) {
       print('Socket connected');
-      // Join user room automatically on server? server does that on connect.
     });
 
     _socket!.onDisconnect((_) => print('Socket disconnected'));
