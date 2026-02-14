@@ -1,1978 +1,1507 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:image_picker/image_picker.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_animate/flutter_animate.dart';
-import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:open_file/open_file.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+import 'package:lottie/lottie.dart';
 
-import 'MessagingClient.dart';
+// ------------------- Constants -------------------
+const String baseUrl = 'https://tweeter.runflare.run';
+const int postsPerPage = 10;
 
-// ------------------------------------------------------------
-// مدیریت وضعیت برنامه با Provider
-// ------------------------------------------------------------
-class AppState extends ChangeNotifier {
-  MessagingClient? _client;
+// ------------------- Models ----------------------
+class User {
+  final int id;
+  final String username;
+  final String bio;
+  final String? profileImage;
+  final bool isBlue;
+
+  User({
+    required this.id,
+    required this.username,
+    this.bio = '',
+    this.profileImage,
+    this.isBlue = false,
+  });
+
+  factory User.fromJson(Map<String, dynamic> json) {
+    return User(
+      id: json['id'] ?? json['user_id'] ?? 0,
+      username: json['username'] ?? '',
+      bio: json['bio'] ?? '',
+      profileImage: json['profile_image'],
+      isBlue: json['is_blue'] == 1,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'username': username,
+    'bio': bio,
+    'profile_image': profileImage,
+    'is_blue': isBlue ? 1 : 0,
+  };
+}
+
+class Post {
+  final int id;
+  final int userId;
+  final String caption;
+  final String mediaType; // image, video, audio, file
+  final String mediaPath;
+  final String? thumbnailPath;
+  final DateTime createdAt;
+  final String username;
+  final String? userProfileImage;
+  final bool userIsBlue;
+  int likesCount;
+  int commentsCount;
+  bool likedByUser;
+  bool bookmarkedByUser;
+  List<Comment>? comments; // for detail view
+
+  Post({
+    required this.id,
+    required this.userId,
+    required this.caption,
+    required this.mediaType,
+    required this.mediaPath,
+    this.thumbnailPath,
+    required this.createdAt,
+    required this.username,
+    this.userProfileImage,
+    required this.userIsBlue,
+    this.likesCount = 0,
+    this.commentsCount = 0,
+    this.likedByUser = false,
+    this.bookmarkedByUser = false,
+    this.comments,
+  });
+
+  factory Post.fromJson(Map<String, dynamic> json) {
+    return Post(
+      id: json['id'],
+      userId: json['user_id'],
+      caption: json['caption'] ?? '',
+      mediaType: json['media_type'],
+      mediaPath: json['media_path'],
+      thumbnailPath: json['thumbnail_path'],
+      createdAt: DateTime.parse(json['created_at']),
+      username: json['username'],
+      userProfileImage: json['profile_image'],
+      userIsBlue: json['is_blue'] == 1,
+      likesCount: json['likes_count'] ?? 0,
+      commentsCount: json['comments_count'] ?? 0,
+      likedByUser: json['liked_by_user'] ?? false,
+      bookmarkedByUser: json['bookmarked_by_user'] ?? false,
+      comments: json['comments'] != null
+          ? (json['comments'] as List).map((c) => Comment.fromJson(c)).toList()
+          : null,
+    );
+  }
+}
+
+class Comment {
+  final int id;
+  final int postId;
+  final int userId;
+  final String content;
+  final DateTime createdAt;
+  final String username;
+  final String? userProfileImage;
+  final bool userIsBlue;
+
+  Comment({
+    required this.id,
+    required this.postId,
+    required this.userId,
+    required this.content,
+    required this.createdAt,
+    required this.username,
+    this.userProfileImage,
+    required this.userIsBlue,
+  });
+
+  factory Comment.fromJson(Map<String, dynamic> json) {
+    return Comment(
+      id: json['id'],
+      postId: json['post_id'],
+      userId: json['user_id'],
+      content: json['content'],
+      createdAt: DateTime.parse(json['created_at']),
+      username: json['username'],
+      userProfileImage: json['profile_image'],
+      userIsBlue: json['is_blue'] == 1,
+    );
+  }
+}
+
+// ------------------- API Service -----------------
+class ApiService {
+  static final ApiService _instance = ApiService._internal();
+  factory ApiService() => _instance;
+  ApiService._internal();
+
+  final Dio _dio = Dio(BaseOptions(
+    baseUrl: baseUrl,
+    connectTimeout: Duration(seconds: 30),
+    receiveTimeout: Duration(seconds: 30),
+  ));
+
+  // Register
+  Future<User> register(String username, String bio, File? profileImage) async {
+    var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/register'));
+    request.fields['username'] = username;
+    if (bio.isNotEmpty) request.fields['bio'] = bio;
+    if (profileImage != null) {
+      request.files.add(await http.MultipartFile.fromPath('profile_image', profileImage.path));
+    }
+    var streamedResponse = await request.send();
+    var response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode == 201) {
+      final data = jsonDecode(response.body);
+      return User(id: data['user_id'], username: username, bio: bio);
+    } else {
+      throw Exception(jsonDecode(response.body)['error'] ?? 'Registration failed');
+    }
+  }
+
+  // Upload post
+  Future<int> uploadPost(int userId, String caption, File mediaFile) async {
+    String filename = mediaFile.path.split('/').last;
+    String mediaType = _getMediaType(filename);
+    String url = '$baseUrl/upload';
+    var request = http.MultipartRequest('POST', Uri.parse(url));
+    request.fields['user_id'] = userId.toString();
+    request.fields['caption'] = caption;
+    request.files.add(await http.MultipartFile.fromPath('media', mediaFile.path));
+    var streamedResponse = await request.send();
+    var response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode == 201) {
+      return jsonDecode(response.body)['post_id'];
+    } else {
+      throw Exception(jsonDecode(response.body)['error'] ?? 'Upload failed');
+    }
+  }
+
+  String _getMediaType(String filename) {
+    var ext = filename.split('.').last.toLowerCase();
+    if (['jpg', 'jpeg', 'png', 'gif'].contains(ext)) return 'image';
+    if (['mp4', 'avi', 'mov', 'mkv'].contains(ext)) return 'video';
+    if (['mp3', 'wav', 'ogg'].contains(ext)) return 'audio';
+    return 'file';
+  }
+
+  // Get posts with pagination
+  Future<List<Post>> getPosts({int page = 1, int? currentUserId}) async {
+    var uri = Uri.parse('$baseUrl/posts').replace(queryParameters: {
+      'page': page.toString(),
+      'per_page': postsPerPage.toString(),
+    });
+    var response = await _dio.getUri(uri);
+    if (response.statusCode == 200) {
+      List<dynamic> data = response.data;
+      return data.map((json) => Post.fromJson(json)).toList();
+    } else {
+      throw Exception('Failed to load posts');
+    }
+  }
+
+  // Get single post with comments and user flags
+  Future<Post> getPost(int postId, {int? currentUserId}) async {
+    var uri = Uri.parse('$baseUrl/post/$postId');
+    if (currentUserId != null) {
+      uri = uri.replace(queryParameters: {'user_id': currentUserId.toString()});
+    }
+    var response = await _dio.getUri(uri);
+    if (response.statusCode == 200) {
+      return Post.fromJson(response.data);
+    } else {
+      throw Exception('Post not found');
+    }
+  }
+
+  // Update post caption
+  Future<void> updatePost(int postId, int userId, String newCaption) async {
+    var response = await _dio.put('$baseUrl/post/$postId',
+        data: {'user_id': userId, 'caption': newCaption});
+    if (response.statusCode != 200) {
+      throw Exception(response.data['error'] ?? 'Update failed');
+    }
+  }
+
+  // Delete post
+  Future<void> deletePost(int postId, int userId) async {
+    var response = await _dio.delete('$baseUrl/post/$postId',
+        queryParameters: {'user_id': userId});
+    if (response.statusCode != 200) {
+      throw Exception(response.data['error'] ?? 'Delete failed');
+    }
+  }
+
+  // Add comment
+  Future<int> addComment(int postId, int userId, String content) async {
+    var response = await _dio.post('$baseUrl/comment',
+        data: {'post_id': postId, 'user_id': userId, 'content': content});
+    if (response.statusCode == 201) {
+      return response.data['comment_id'];
+    } else {
+      throw Exception(response.data['error'] ?? 'Failed to add comment');
+    }
+  }
+
+  // Update comment
+  Future<void> updateComment(int commentId, int userId, String newContent) async {
+    var response = await _dio.put('$baseUrl/comment/$commentId',
+        data: {'user_id': userId, 'content': newContent});
+    if (response.statusCode != 200) {
+      throw Exception(response.data['error'] ?? 'Update failed');
+    }
+  }
+
+  // Delete comment
+  Future<void> deleteComment(int commentId, int userId) async {
+    var response = await _dio.delete('$baseUrl/comment/$commentId',
+        queryParameters: {'user_id': userId});
+    if (response.statusCode != 200) {
+      throw Exception(response.data['error'] ?? 'Delete failed');
+    }
+  }
+
+  // Toggle like
+  Future<bool> toggleLike(int postId, int userId) async {
+    var response = await _dio.post('$baseUrl/like',
+        data: {'post_id': postId, 'user_id': userId});
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return response.data['liked'];
+    } else {
+      throw Exception('Failed to toggle like');
+    }
+  }
+
+  // Toggle bookmark
+  Future<bool> toggleBookmark(int postId, int userId) async {
+    var response = await _dio.post('$baseUrl/bookmark',
+        data: {'post_id': postId, 'user_id': userId});
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return response.data['bookmarked'];
+    } else {
+      throw Exception('Failed to toggle bookmark');
+    }
+  }
+
+  // Get bookmarks
+  Future<List<Post>> getBookmarks(int userId) async {
+    var response = await _dio.get('$baseUrl/bookmarks/$userId');
+    if (response.statusCode == 200) {
+      List<dynamic> data = response.data;
+      return data.map((json) => Post.fromJson(json)).toList();
+    } else {
+      throw Exception('Failed to load bookmarks');
+    }
+  }
+
+  // Download file
+  Future<void> downloadFile(String url, String filename) async {
+    var status = await Permission.storage.request();
+    if (!status.isGranted) {
+      throw Exception('Storage permission denied');
+    }
+    Directory? dir = await getExternalStorageDirectory();
+    String savePath = '${dir?.path}/$filename';
+    await _dio.download(url, savePath);
+    OpenFile.open(savePath);
+  }
+}
+
+// ------------------- Providers -------------------
+class AuthProvider extends ChangeNotifier {
   User? _currentUser;
-  List<Chat> _chats = [];
-  List<User> _users = [];
-  Chat? _selectedChat;
-  List<Message> _messages = [];
-  bool _isLoading = false;
-  String? _error;
-  bool _isSocketConnected = false;
-  Map<int, bool> _typingUsers = {}; // chatId -> true if someone typing
-
-  // برای ناوبری در صورت خطای 401
-  GlobalKey<NavigatorState>? navigatorKey;
-
-  // Getters
-  MessagingClient? get client => _client;
   User? get currentUser => _currentUser;
-  List<Chat> get chats => _chats;
-  List<User> get users => _users;
-  Chat? get selectedChat => _selectedChat;
-  List<Message> get messages => _messages;
-  bool get isLoading => _isLoading;
-  String? get error => _error;
-  bool get isSocketConnected => _isSocketConnected;
-  Map<int, bool> get typingUsers => _typingUsers;
 
-  // Setters
-  void setCurrentUser(User user) {
-    _currentUser = user;
-    notifyListeners();
+  AuthProvider() {
+    _loadUser();
   }
 
-  void setChats(List<Chat> chats) {
-    _chats = chats;
-    notifyListeners();
-  }
-
-  void setUsers(List<User> users) {
-    _users = users;
-    notifyListeners();
-  }
-
-  void setSelectedChat(Chat? chat) {
-    _selectedChat = chat;
-    if (chat != null) {
-      _loadMessages(chat.id);
-    } else {
-      _messages = [];
-    }
-    notifyListeners();
-  }
-
-  void setMessages(List<Message> messages) {
-    _messages = messages;
-    notifyListeners();
-  }
-
-  void setLoading(bool loading) {
-    _isLoading = loading;
-    notifyListeners();
-  }
-
-  void setError(String? error) {
-    _error = error;
-    notifyListeners();
-  }
-
-  void setSocketConnected(bool connected) {
-    _isSocketConnected = connected;
-    notifyListeners();
-  }
-
-  void updateTyping(int chatId, bool isTyping) {
-    _typingUsers[chatId] = isTyping;
-    notifyListeners();
-  }
-
-  // ------------------------------------------------------------
-  // مدیریت خطای 401
-  // ------------------------------------------------------------
-  void _handleUnauthorized() {
-    // اگر کاربر در صفحه Auth نیست، به آن برگردان
-    if (navigatorKey?.currentContext != null) {
-      // اگر صفحه جاری Auth نیست، logout کرده و به Auth برو
-      if (ModalRoute.of(navigatorKey!.currentContext!)?.settings.name != '/auth') {
-        logout();
-        Navigator.of(navigatorKey!.currentContext!).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => AuthPage()),
-          (route) => false,
-        );
-      }
-    }
-  }
-
-  // ------------------------------------------------------------
-  // عملیات اصلی
-  // ------------------------------------------------------------
-  Future<void> initFromStorage() async {
+  Future<void> _loadUser() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token');
-    final userId = prefs.getInt('userId');
-    if (token != null && userId != null) {
-      _client = MessagingClient(baseUrl: 'https://tweeter.runflare.run', token: token);
-      try {
-        final user = await _client!.getUser(userId);
-        _currentUser = user;
-        _client!.connectSocket();
-        _setupSocketListeners();
-        await loadMyChats();
-        await loadUsers();
-      } catch (e) {
-        // اگر توکن نامعتبر بود، پاکش کن
-        await prefs.remove('token');
-        await prefs.remove('userId');
-        _client = MessagingClient(baseUrl: 'https://tweeter.runflare.run');
-      }
-    } else {
-      _client = MessagingClient(baseUrl: 'https://tweeter.runflare.run');
+    String? userJson = prefs.getString('user');
+    if (userJson != null) {
+      _currentUser = User.fromJson(jsonDecode(userJson));
+      notifyListeners();
     }
-    notifyListeners();
   }
 
-  Future<bool> login(String username, String password) async {
-    setLoading(true);
-    setError(null);
+  Future<void> register(String username, String bio, File? profileImage) async {
     try {
-      final user = await _client!.login(username, password);
+      User user = await ApiService().register(username, bio, profileImage);
       _currentUser = user;
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('token', _client!.token!);
-      await prefs.setInt('userId', user.id);
-      _client!.connectSocket();
-      _setupSocketListeners();
-      await loadMyChats();
-      await loadUsers();
-      setLoading(false);
-      return true;
+      await prefs.setString('user', jsonEncode(user.toJson()));
+      notifyListeners();
     } catch (e) {
-      setError(e.toString());
-      setLoading(false);
-      return false;
-    }
-  }
-
-  Future<bool> register({
-    required String username,
-    required String password,
-    String? firstName,
-    String? lastName,
-    String? phone,
-    String? bio,
-  }) async {
-    setLoading(true);
-    setError(null);
-    try {
-      final user = await _client!.register(
-        username: username,
-        password: password,
-        firstName: firstName,
-        lastName: lastName,
-        phone: phone,
-        bio: bio,
-      );
-      return await login(username, password);
-    } catch (e) {
-      setError(e.toString());
-      setLoading(false);
-      return false;
+      rethrow;
     }
   }
 
   Future<void> logout() async {
-    _client?.disconnectSocket();
-    _client = MessagingClient(baseUrl: 'https://tweeter.runflare.run');
     _currentUser = null;
-    _chats = [];
-    _users = [];
-    _selectedChat = null;
-    _messages = [];
-    _typingUsers.clear();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('token');
-    await prefs.remove('userId');
+    await prefs.remove('user');
     notifyListeners();
   }
+}
 
-  Future<void> loadMyChats() async {
-    try {
-      final chats = await _client!.getMyChats();
-      _chats = chats;
+class ThemeProvider extends ChangeNotifier {
+  ThemeMode _themeMode = ThemeMode.system;
+  ThemeMode get themeMode => _themeMode;
+
+  ThemeProvider() {
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    int? index = prefs.getInt('themeMode');
+    if (index != null) {
+      _themeMode = ThemeMode.values[index];
       notifyListeners();
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
     }
   }
 
-  Future<void> loadUsers() async {
-    try {
-      final users = await _client!.getUsers();
-      _users = users.where((u) => u.id != _currentUser?.id).toList();
-      notifyListeners();
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
-    }
-  }
-
-  Future<void> _loadMessages(int chatId) async {
-    try {
-      final msgs = await _client!.getMessages(chatId, limit: 100);
-      _messages = msgs;
-      notifyListeners();
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
-    }
-  }
-
-  Future<void> sendMessage(int chatId, {String? text, File? mediaFile, int? replyTo}) async {
-    try {
-      final msg = await _client!.sendMessage(chatId, text: text, mediaFile: mediaFile, replyTo: replyTo);
-      _messages.insert(0, msg);
-      // بروزرسانی آخرین پیام چت
-      final chatIndex = _chats.indexWhere((c) => c.id == chatId);
-      if (chatIndex != -1) {
-        _chats[chatIndex] = Chat(
-          id: _chats[chatIndex].id,
-          type: _chats[chatIndex].type,
-          title: _chats[chatIndex].title,
-          description: _chats[chatIndex].description,
-          avatarUrl: _chats[chatIndex].avatarUrl,
-          createdBy: _chats[chatIndex].createdBy,
-          createdAt: _chats[chatIndex].createdAt,
-          participants: _chats[chatIndex].participants,
-          lastMessage: msg,
-          isArchived: _chats[chatIndex].isArchived,
-          otherUser: _chats[chatIndex].otherUser,
-        );
-        _chats.sort((a, b) {
-          if (a.lastMessage == null) return 1;
-          if (b.lastMessage == null) return -1;
-          return b.lastMessage!.createdAt.compareTo(a.lastMessage!.createdAt);
-        });
-      }
-      notifyListeners();
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
-    }
-  }
-
-  Future<void> editMessage(int messageId, String newText) async {
-    try {
-      final updated = await _client!.editMessage(messageId, newText);
-      final index = _messages.indexWhere((m) => m.id == messageId);
-      if (index != -1) {
-        _messages[index] = updated;
-        notifyListeners();
-      }
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
-    }
-  }
-
-  Future<void> deleteMessage(int messageId) async {
-    try {
-      await _client!.deleteMessage(messageId);
-      _messages.removeWhere((m) => m.id == messageId);
-      notifyListeners();
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
-    }
-  }
-
-  Future<void> addReaction(int messageId, String emoji) async {
-    try {
-      final reactions = await _client!.addReaction(messageId, emoji);
-      final index = _messages.indexWhere((m) => m.id == messageId);
-      if (index != -1) {
-        _messages[index] = Message(
-          id: _messages[index].id,
-          chatId: _messages[index].chatId,
-          sender: _messages[index].sender,
-          replyToId: _messages[index].replyToId,
-          text: _messages[index].text,
-          mediaUrl: _messages[index].mediaUrl,
-          mediaType: _messages[index].mediaType,
-          createdAt: _messages[index].createdAt,
-          editedAt: _messages[index].editedAt,
-          isDeleted: _messages[index].isDeleted,
-          forwardFrom: _messages[index].forwardFrom,
-          pinned: _messages[index].pinned,
-          reactions: reactions,
-          readBy: _messages[index].readBy,
-        );
-        notifyListeners();
-      }
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
-    }
-  }
-
-  Future<void> removeReaction(int messageId) async {
-    try {
-      final reactions = await _client!.removeReaction(messageId);
-      final index = _messages.indexWhere((m) => m.id == messageId);
-      if (index != -1) {
-        _messages[index] = Message(
-          id: _messages[index].id,
-          chatId: _messages[index].chatId,
-          sender: _messages[index].sender,
-          replyToId: _messages[index].replyToId,
-          text: _messages[index].text,
-          mediaUrl: _messages[index].mediaUrl,
-          mediaType: _messages[index].mediaType,
-          createdAt: _messages[index].createdAt,
-          editedAt: _messages[index].editedAt,
-          isDeleted: _messages[index].isDeleted,
-          forwardFrom: _messages[index].forwardFrom,
-          pinned: _messages[index].pinned,
-          reactions: reactions,
-          readBy: _messages[index].readBy,
-        );
-        notifyListeners();
-      }
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
-    }
-  }
-
-  Future<void> pinMessage(int chatId, int messageId) async {
-    try {
-      final pinnedMsg = await _client!.pinMessage(chatId, messageId);
-      for (int i = 0; i < _messages.length; i++) {
-        if (_messages[i].id == messageId) {
-          _messages[i] = pinnedMsg;
-        } else if (_messages[i].pinned) {
-          _messages[i] = Message(
-            id: _messages[i].id,
-            chatId: _messages[i].chatId,
-            sender: _messages[i].sender,
-            replyToId: _messages[i].replyToId,
-            text: _messages[i].text,
-            mediaUrl: _messages[i].mediaUrl,
-            mediaType: _messages[i].mediaType,
-            createdAt: _messages[i].createdAt,
-            editedAt: _messages[i].editedAt,
-            isDeleted: _messages[i].isDeleted,
-            forwardFrom: _messages[i].forwardFrom,
-            pinned: false,
-            reactions: _messages[i].reactions,
-            readBy: _messages[i].readBy,
-          );
-        }
-      }
-      notifyListeners();
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
-    }
-  }
-
-  Future<void> unpinMessage(int chatId) async {
-    try {
-      await _client!.unpinMessage(chatId);
-      for (int i = 0; i < _messages.length; i++) {
-        if (_messages[i].pinned) {
-          _messages[i] = Message(
-            id: _messages[i].id,
-            chatId: _messages[i].chatId,
-            sender: _messages[i].sender,
-            replyToId: _messages[i].replyToId,
-            text: _messages[i].text,
-            mediaUrl: _messages[i].mediaUrl,
-            mediaType: _messages[i].mediaType,
-            createdAt: _messages[i].createdAt,
-            editedAt: _messages[i].editedAt,
-            isDeleted: _messages[i].isDeleted,
-            forwardFrom: _messages[i].forwardFrom,
-            pinned: false,
-            reactions: _messages[i].reactions,
-            readBy: _messages[i].readBy,
-          );
-          break;
-        }
-      }
-      notifyListeners();
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
-    }
-  }
-
-  Future<void> forwardMessage(int messageId, List<int> chatIds) async {
-    try {
-      await _client!.forwardMessage(messageId, chatIds);
-      if (_selectedChat != null) {
-        _loadMessages(_selectedChat!.id);
-      }
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        _handleUnauthorized();
-      } else {
-        setError(e.toString());
-      }
-    }
-  }
-
-  Future<void> markAsRead(int messageId) async {
-    try {
-      await _client!.markAsRead(messageId);
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  void sendTyping(int chatId) {
-    _client?.sendTyping(chatId);
-  }
-
-  void _setupSocketListeners() {
-    _client!.onSocketEvent.listen((event) {
-      switch (event.type) {
-        case SocketEventType.newMessage:
-          final msg = event.newMessage;
-          if (msg != null) _handleNewMessage(msg);
-          break;
-        case SocketEventType.messageUpdated:
-          final msg = event.messageUpdated;
-          if (msg != null) _handleMessageUpdated(msg);
-          break;
-        case SocketEventType.messageDeleted:
-          final msgId = event.messageDeleted;
-          if (msgId != null) _handleMessageDeleted(msgId);
-          break;
-        case SocketEventType.reactionUpdated:
-          final data = event.reactionUpdated;
-          if (data != null) _handleReactionUpdated(data);
-          break;
-        case SocketEventType.messagePinned:
-          final msg = event.messagePinned;
-          if (msg != null) _handleMessagePinned(msg);
-          break;
-        case SocketEventType.messageUnpinned:
-          final msgId = event.messageUnpinned;
-          if (msgId != null) _handleMessageUnpinned(msgId);
-          break;
-        case SocketEventType.typing:
-          final typing = event.typingIndicator;
-          if (typing != null) {
-            final chatId = typing['chat_id'] as int?;
-            final isTyping = typing['is_typing'] as bool? ?? false;
-            if (chatId != null) updateTyping(chatId, isTyping);
-          }
-          break;
-        default:
-          break;
-      }
-    });
-  }
-
-  void _handleNewMessage(Message msg) {
-    if (_selectedChat != null && _selectedChat!.id == msg.chatId) {
-      _messages.insert(0, msg);
-      _client?.markAsRead(msg.id);
-    }
-    final chatIndex = _chats.indexWhere((c) => c.id == msg.chatId);
-    if (chatIndex != -1) {
-      _chats[chatIndex] = Chat(
-        id: _chats[chatIndex].id,
-        type: _chats[chatIndex].type,
-        title: _chats[chatIndex].title,
-        description: _chats[chatIndex].description,
-        avatarUrl: _chats[chatIndex].avatarUrl,
-        createdBy: _chats[chatIndex].createdBy,
-        createdAt: _chats[chatIndex].createdAt,
-        participants: _chats[chatIndex].participants,
-        lastMessage: msg,
-        isArchived: _chats[chatIndex].isArchived,
-        otherUser: _chats[chatIndex].otherUser,
-      );
-      _chats.sort((a, b) {
-        if (a.lastMessage == null) return 1;
-        if (b.lastMessage == null) return -1;
-        return b.lastMessage!.createdAt.compareTo(a.lastMessage!.createdAt);
-      });
-    }
+  Future<void> setThemeMode(ThemeMode mode) async {
+    _themeMode = mode;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('themeMode', mode.index);
     notifyListeners();
   }
+}
 
-  void _handleMessageUpdated(Message msg) {
-    final index = _messages.indexWhere((m) => m.id == msg.id);
+class PostsProvider extends ChangeNotifier {
+  List<Post> _posts = [];
+  int _currentPage = 1;
+  bool _hasMore = true;
+  bool _isLoading = false;
+
+  List<Post> get posts => _posts;
+  bool get hasMore => _hasMore;
+  bool get isLoading => _isLoading;
+
+  Future<void> loadPosts({int? userId, bool refresh = false}) async {
+    if (refresh) {
+      _currentPage = 1;
+      _hasMore = true;
+      _posts = [];
+    }
+    if (!_hasMore || _isLoading) return;
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      List<Post> newPosts = await ApiService().getPosts(page: _currentPage, currentUserId: userId);
+      if (newPosts.isEmpty) {
+        _hasMore = false;
+      } else {
+        _posts.addAll(newPosts);
+        _currentPage++;
+      }
+    } catch (e) {
+      print(e);
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  void updatePostInFeed(Post updatedPost) {
+    int index = _posts.indexWhere((p) => p.id == updatedPost.id);
     if (index != -1) {
-      _messages[index] = msg;
-      notifyListeners();
-    }
-    for (int i = 0; i < _chats.length; i++) {
-      if (_chats[i].lastMessage?.id == msg.id) {
-        _chats[i] = Chat(
-          id: _chats[i].id,
-          type: _chats[i].type,
-          title: _chats[i].title,
-          description: _chats[i].description,
-          avatarUrl: _chats[i].avatarUrl,
-          createdBy: _chats[i].createdBy,
-          createdAt: _chats[i].createdAt,
-          participants: _chats[i].participants,
-          lastMessage: msg,
-          isArchived: _chats[i].isArchived,
-          otherUser: _chats[i].otherUser,
-        );
-        notifyListeners();
-        break;
-      }
-    }
-  }
-
-  void _handleMessageDeleted(int msgId) {
-    _messages.removeWhere((m) => m.id == msgId);
-    notifyListeners();
-  }
-
-  void _handleReactionUpdated(Map<String, dynamic> data) {
-    final messageId = data['message_id'] as int?;
-    final reactions = (data['reactions'] as List?)?.map((e) => Reaction.fromJson(e as Map<String, dynamic>)).toList();
-    if (messageId != null && reactions != null) {
-      final index = _messages.indexWhere((m) => m.id == messageId);
-      if (index != -1) {
-        _messages[index] = Message(
-          id: _messages[index].id,
-          chatId: _messages[index].chatId,
-          sender: _messages[index].sender,
-          replyToId: _messages[index].replyToId,
-          text: _messages[index].text,
-          mediaUrl: _messages[index].mediaUrl,
-          mediaType: _messages[index].mediaType,
-          createdAt: _messages[index].createdAt,
-          editedAt: _messages[index].editedAt,
-          isDeleted: _messages[index].isDeleted,
-          forwardFrom: _messages[index].forwardFrom,
-          pinned: _messages[index].pinned,
-          reactions: reactions,
-          readBy: _messages[index].readBy,
-        );
-        notifyListeners();
-      }
-    }
-  }
-
-  void _handleMessagePinned(Message msg) {
-    for (int i = 0; i < _messages.length; i++) {
-      if (_messages[i].id == msg.id) {
-        _messages[i] = msg;
-      } else if (_messages[i].pinned) {
-        _messages[i] = Message(
-          id: _messages[i].id,
-          chatId: _messages[i].chatId,
-          sender: _messages[i].sender,
-          replyToId: _messages[i].replyToId,
-          text: _messages[i].text,
-          mediaUrl: _messages[i].mediaUrl,
-          mediaType: _messages[i].mediaType,
-          createdAt: _messages[i].createdAt,
-          editedAt: _messages[i].editedAt,
-          isDeleted: _messages[i].isDeleted,
-          forwardFrom: _messages[i].forwardFrom,
-          pinned: false,
-          reactions: _messages[i].reactions,
-          readBy: _messages[i].readBy,
-        );
-      }
-    }
-    notifyListeners();
-  }
-
-  void _handleMessageUnpinned(int msgId) {
-    final index = _messages.indexWhere((m) => m.id == msgId);
-    if (index != -1) {
-      _messages[index] = Message(
-        id: _messages[index].id,
-        chatId: _messages[index].chatId,
-        sender: _messages[index].sender,
-        replyToId: _messages[index].replyToId,
-        text: _messages[index].text,
-        mediaUrl: _messages[index].mediaUrl,
-        mediaType: _messages[index].mediaType,
-        createdAt: _messages[index].createdAt,
-        editedAt: _messages[index].editedAt,
-        isDeleted: _messages[index].isDeleted,
-        forwardFrom: _messages[index].forwardFrom,
-        pinned: false,
-        reactions: _messages[index].reactions,
-        readBy: _messages[index].readBy,
-      );
+      _posts[index] = updatedPost;
       notifyListeners();
     }
   }
-}
 
-// ------------------------------------------------------------
-// صفحه ورود / ثبت‌نام
-// ------------------------------------------------------------
-class AuthPage extends StatefulWidget {
-  @override
-  _AuthPageState createState() => _AuthPageState();
-}
-
-class _AuthPageState extends State<AuthPage> {
-  bool _isLogin = true;
-  final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _firstNameController = TextEditingController();
-  final _lastNameController = TextEditingController();
-  final _phoneController = TextEditingController();
-  final _bioController = TextEditingController();
-
-  @override
-  Widget build(BuildContext context) {
-    final appState = Provider.of<AppState>(context);
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: Colors.blue,
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: Icon(Icons.chat, color: Colors.white, size: 60),
-                ),
-                SizedBox(height: 20),
-                Text(
-                  'Nokhodgram',
-                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-                ),
-                SizedBox(height: 40),
-                Card(
-                  elevation: 4,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Form(
-                      key: _formKey,
-                      child: Column(
-                        children: [
-                          Text(
-                            _isLogin ? 'ورود' : 'ثبت‌نام',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-                          ),
-                          SizedBox(height: 20),
-                          TextFormField(
-                            controller: _usernameController,
-                            decoration: InputDecoration(
-                              labelText: 'نام کاربری',
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                              prefixIcon: Icon(Icons.person),
-                            ),
-                            validator: (v) => v == null || v.isEmpty ? 'لطفا نام کاربری را وارد کنید' : null,
-                          ),
-                          SizedBox(height: 16),
-                          TextFormField(
-                            controller: _passwordController,
-                            obscureText: true,
-                            decoration: InputDecoration(
-                              labelText: 'رمز عبور',
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                              prefixIcon: Icon(Icons.lock),
-                            ),
-                            validator: (v) => v == null || v.isEmpty ? 'لطفا رمز عبور را وارد کنید' : null,
-                          ),
-                          if (!_isLogin) ...[
-                            SizedBox(height: 16),
-                            TextFormField(
-                              controller: _firstNameController,
-                              decoration: InputDecoration(
-                                labelText: 'نام',
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                prefixIcon: Icon(Icons.badge),
-                              ),
-                            ),
-                            SizedBox(height: 16),
-                            TextFormField(
-                              controller: _lastNameController,
-                              decoration: InputDecoration(
-                                labelText: 'نام خانوادگی',
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                prefixIcon: Icon(Icons.badge_outlined),
-                              ),
-                            ),
-                            SizedBox(height: 16),
-                            TextFormField(
-                              controller: _phoneController,
-                              keyboardType: TextInputType.phone,
-                              decoration: InputDecoration(
-                                labelText: 'تلفن',
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                prefixIcon: Icon(Icons.phone),
-                              ),
-                            ),
-                            SizedBox(height: 16),
-                            TextFormField(
-                              controller: _bioController,
-                              maxLines: 2,
-                              decoration: InputDecoration(
-                                labelText: 'بیوگرافی',
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                prefixIcon: Icon(Icons.info),
-                              ),
-                            ),
-                          ],
-                          SizedBox(height: 24),
-                          if (appState.isLoading)
-                            CircularProgressIndicator()
-                          else
-                            ElevatedButton(
-                              onPressed: () async {
-                                if (_formKey.currentState!.validate()) {
-                                  bool success;
-                                  if (_isLogin) {
-                                    success = await appState.login(
-                                      _usernameController.text,
-                                      _passwordController.text,
-                                    );
-                                  } else {
-                                    success = await appState.register(
-                                      username: _usernameController.text,
-                                      password: _passwordController.text,
-                                      firstName: _firstNameController.text.isNotEmpty ? _firstNameController.text : null,
-                                      lastName: _lastNameController.text.isNotEmpty ? _lastNameController.text : null,
-                                      phone: _phoneController.text.isNotEmpty ? _phoneController.text : null,
-                                      bio: _bioController.text.isNotEmpty ? _bioController.text : null,
-                                    );
-                                  }
-                                  if (success && mounted) {
-                                    // انتقال به صفحه اصلی
-                                    Navigator.pushReplacement(
-                                      context,
-                                      MaterialPageRoute(builder: (_) => MainPage()),
-                                    );
-                                  } else if (appState.error != null && mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text(appState.error!), backgroundColor: Colors.red),
-                                    );
-                                  }
-                                }
-                              },
-                              style: ElevatedButton.styleFrom(
-                                minimumSize: Size(double.infinity, 50),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                backgroundColor: Colors.blue,
-                              ),
-                              child: Text(_isLogin ? 'ورود' : 'ثبت‌نام', style: TextStyle(fontSize: 16)),
-                            ),
-                          SizedBox(height: 12),
-                          TextButton(
-                            onPressed: () => setState(() => _isLogin = !_isLogin),
-                            child: Text(_isLogin ? 'ثبت‌نام نکرده‌اید؟ کلیک کنید' : 'قبلاً ثبت‌نام کرده‌اید؟ وارد شوید'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _usernameController.dispose();
-    _passwordController.dispose();
-    _firstNameController.dispose();
-    _lastNameController.dispose();
-    _phoneController.dispose();
-    _bioController.dispose();
-    super.dispose();
+  void removePostFromFeed(int postId) {
+    _posts.removeWhere((p) => p.id == postId);
+    notifyListeners();
   }
 }
 
-// ------------------------------------------------------------
-// صفحه تنظیمات (Settings)
-// ------------------------------------------------------------
-class SettingsPage extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('تنظیمات')),
-      body: ListView(
-        children: [
-          ListTile(
-            leading: Icon(Icons.notifications),
-            title: Text('اعلان‌ها'),
-            trailing: Switch(value: true, onChanged: (val) {}),
-          ),
-          ListTile(
-            leading: Icon(Icons.dark_mode),
-            title: Text('حالت تاریک'),
-            trailing: Switch(value: false, onChanged: (val) {}),
-          ),
-          Divider(),
-          ListTile(
-            leading: Icon(Icons.language),
-            title: Text('زبان'),
-            trailing: Text('فارسی'),
-          ),
-          ListTile(
-            leading: Icon(Icons.storage),
-            title: Text('ذخیره سازی'),
-            trailing: Text('12.3 MB'),
-          ),
-        ],
-      ),
-    );
-  }
-}
+class BookmarksProvider extends ChangeNotifier {
+  List<Post> _bookmarks = [];
+  bool _isLoading = false;
+  List<Post> get bookmarks => _bookmarks;
 
-// ------------------------------------------------------------
-// صفحه آرشیو چت‌ها (Archived Chats)
-// ------------------------------------------------------------
-class ArchivedChatsPage extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    // در اینجا می‌توانید از API واقعی برای دریافت چت‌های آرشیو شده استفاده کنید
-    // برای نمونه، یک لیست خالی نشان می‌دهیم
-    return Scaffold(
-      appBar: AppBar(title: Text('آرشیو چت‌ها')),
-      body: Center(
-        child: Text('چت‌های آرشیو شده وجود ندارد'),
-      ),
-    );
-  }
-}
-
-// ------------------------------------------------------------
-// صفحه اصلی با BottomNavigationBar
-// ------------------------------------------------------------
-class MainPage extends StatefulWidget {
-  @override
-  _MainPageState createState() => _MainPageState();
-}
-
-class _MainPageState extends State<MainPage> {
-  int _currentIndex = 0;
-  final TextEditingController _searchController = TextEditingController();
-  List<Chat> _filteredChats = [];
-  List<User> _filteredUsers = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _filteredChats = context.read<AppState>().chats;
-    _filteredUsers = context.read<AppState>().users;
-    _searchController.addListener(_filter);
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _filter() {
-    final query = _searchController.text.toLowerCase();
-    final appState = context.read<AppState>();
-    setState(() {
-      if (query.isEmpty) {
-        _filteredChats = appState.chats;
-        _filteredUsers = appState.users;
-      } else {
-        _filteredChats = appState.chats.where((c) {
-          final title = c.title ?? c.otherUser?.username ?? '';
-          return title.toLowerCase().contains(query);
-        }).toList();
-        _filteredUsers = appState.users.where((u) {
-          return u.username.toLowerCase().contains(query) ||
-              (u.firstName?.toLowerCase().contains(query) ?? false) ||
-              (u.lastName?.toLowerCase().contains(query) ?? false);
-        }).toList();
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final appState = Provider.of<AppState>(context);
-    // به‌روزرسانی فیلترها
-    WidgetsBinding.instance.addPostFrameCallback((_) => _filter());
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Nokhodgram'),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.search, color: Colors.black),
-            onPressed: () {
-              // فوکوس روی فیلد جستجو
-            },
-          ),
-          IconButton(
-            icon: Icon(Icons.add_comment, color: Colors.black),
-            onPressed: () => _showNewChatDialog(context),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.all(8.0),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'جستجو...',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
-                filled: true,
-                fillColor: Colors.grey.shade100,
-              ),
-            ),
-          ),
-          Expanded(
-            child: IndexedStack(
-              index: _currentIndex,
-              children: [
-                _buildChatsList(appState),
-                _buildUsersList(appState),
-              ],
-            ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
-        items: [
-          BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'چت‌ها'),
-          BottomNavigationBarItem(icon: Icon(Icons.people), label: 'کاربران'),
-        ],
-      ),
-      drawer: _buildDrawer(context, appState),
-    );
-  }
-
-  Widget _buildDrawer(BuildContext context, AppState appState) {
-    return Drawer(
-      child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          UserAccountsDrawerHeader(
-            accountName: Text(appState.currentUser?.firstName ?? appState.currentUser?.username ?? 'کاربر'),
-            accountEmail: Text(appState.currentUser?.phone ?? ''),
-            currentAccountPicture: GestureDetector(
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfilePage())),
-              child: CircleAvatar(
-                backgroundImage: appState.currentUser?.avatarUrl != null
-                    ? CachedNetworkImageProvider(appState.currentUser!.avatarUrl!)
-                    : null,
-                child: appState.currentUser?.avatarUrl == null ? Icon(Icons.person) : null,
-              ),
-            ),
-            decoration: BoxDecoration(color: Colors.blue),
-          ),
-          ListTile(
-            leading: Icon(Icons.person),
-            title: Text('پروفایل'),
-            onTap: () {
-              Navigator.pop(context);
-              Navigator.push(context, MaterialPageRoute(builder: (_) => ProfilePage()));
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.chat),
-            title: Text('چت جدید'),
-            onTap: () {
-              Navigator.pop(context);
-              _showNewChatDialog(context);
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.archive),
-            title: Text('آرشیو'),
-            onTap: () {
-              Navigator.pop(context);
-              Navigator.push(context, MaterialPageRoute(builder: (_) => ArchivedChatsPage()));
-            },
-          ),
-          Divider(),
-          ListTile(
-            leading: Icon(Icons.settings),
-            title: Text('تنظیمات'),
-            onTap: () {
-              Navigator.pop(context);
-              Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsPage()));
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.exit_to_app),
-            title: Text('خروج'),
-            onTap: () async {
-              await appState.logout();
-              Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => AuthPage()));
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChatsList(AppState appState) {
-    if (_filteredChats.isEmpty) {
-      return Center(child: Text('چتی وجود ندارد'));
-    }
-    return ListView.builder(
-      reverse: true,
-      itemCount: _filteredChats.length,
-      itemBuilder: (context, index) {
-        final chat = _filteredChats[index];
-        final isTyping = appState.typingUsers[chat.id] ?? false;
-        final title = chat.type == 'private'
-            ? (chat.otherUser?.firstName != null ? '${chat.otherUser!.firstName} ${chat.otherUser!.lastName ?? ''}' : chat.otherUser?.username ?? '')
-            : (chat.title ?? 'گروه');
-        final avatarUrl = chat.type == 'private' ? chat.otherUser?.avatarUrl : chat.avatarUrl;
-        final lastMsg = chat.lastMessage;
-        String lastMsgText = '';
-        if (lastMsg != null) {
-          if (lastMsg.isDeleted) {
-            lastMsgText = 'این پیام حذف شده است';
-          } else if (lastMsg.mediaUrl != null) {
-            lastMsgText = '📷 ${lastMsg.mediaType ?? 'رسانه'}';
-          } else {
-            lastMsgText = lastMsg.text ?? '';
-          }
-        }
-        final timeStr = lastMsg != null ? DateFormat.Hm().format(lastMsg.createdAt.toLocal()) : '';
-
-        return ListTile(
-          leading: Stack(
-            children: [
-              CircleAvatar(
-                backgroundImage: avatarUrl != null ? CachedNetworkImageProvider(avatarUrl) : null,
-                child: avatarUrl == null ? Icon(chat.type == 'private' ? Icons.person : Icons.group) : null,
-              ),
-              if (chat.type == 'private' && (chat.otherUser?.isOnline ?? false))
-                Positioned(
-                  bottom: 0,
-                  right: 0,
-                  child: Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(color: Colors.green, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)),
-                  ),
-                ),
-            ],
-          ),
-          title: Text(title, style: TextStyle(fontWeight: FontWeight.w500)),
-          subtitle: isTyping
-              ? Text('در حال تایپ...', style: TextStyle(color: Colors.green, fontSize: 12))
-              : Text(lastMsgText, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13)),
-          trailing: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(timeStr, style: TextStyle(fontSize: 11, color: Colors.grey)),
-              if (lastMsg != null && lastMsg.sender.id != appState.currentUser?.id && !lastMsg.readBy.contains(appState.currentUser?.id))
-                Container(margin: EdgeInsets.only(top: 4), width: 8, height: 8, decoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle)),
-            ],
-          ),
-          onTap: () async {
-            appState.setSelectedChat(chat);
-            await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(chat: chat)));
-            appState.setSelectedChat(null);
-            appState.loadMyChats();
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildUsersList(AppState appState) {
-    if (appState.error != null && _filteredUsers.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text('خطا: ${appState.error}'),
-            SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () => appState.loadUsers(),
-              child: Text('تلاش مجدد'),
-            ),
-          ],
-        ),
-      );
-    }
-    if (_filteredUsers.isEmpty) {
-      return Center(child: Text('کاربری یافت نشد'));
-    }
-    return ListView.builder(
-      itemCount: _filteredUsers.length,
-      itemBuilder: (context, index) {
-        final user = _filteredUsers[index];
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundImage: user.avatarUrl != null ? CachedNetworkImageProvider(user.avatarUrl!) : null,
-            child: user.avatarUrl == null ? Icon(Icons.person) : null,
-          ),
-          title: Text(user.firstName != null ? '${user.firstName} ${user.lastName ?? ''}' : user.username),
-          subtitle: Text(user.bio ?? ''),
-          trailing: user.isOnline
-              ? Container(width: 10, height: 10, decoration: BoxDecoration(color: Colors.green, shape: BoxShape.circle))
-              : null,
-          onTap: () => _startPrivateChat(user.id),
-        );
-      },
-    );
-  }
-
-  void _showNewChatDialog(BuildContext context) {
-    final appState = Provider.of<AppState>(context, listen: false);
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text('شروع چت جدید'),
-          content: Container(
-            width: double.maxFinite,
-            height: 400,
-            child: ListView.builder(
-              itemCount: appState.users.length,
-              itemBuilder: (context, index) {
-                final user = appState.users[index];
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundImage: user.avatarUrl != null ? CachedNetworkImageProvider(user.avatarUrl!) : null,
-                  ),
-                  title: Text(user.username),
-                  subtitle: Text(user.firstName ?? ''),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _startPrivateChat(user.id);
-                  },
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _startPrivateChat(int userId) async {
-    final appState = context.read<AppState>();
-    final existingChat = appState.chats.firstWhere(
-      (c) => c.type == 'private' && c.participants.any((p) => p.id == userId) && c.participants.any((p) => p.id == appState.currentUser?.id),
-      orElse: () => null as Chat,
-    );
-    if (existingChat != null) {
-      appState.setSelectedChat(existingChat);
-      Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(chat: existingChat)));
-    } else {
-      try {
-        final newChat = await appState.client!.createChat(
-          type: 'private',
-          participantIds: [userId],
-        );
-        await appState.loadMyChats();
-        appState.setSelectedChat(newChat);
-        Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(chat: newChat)));
-      } catch (e) {
-        if (e is ApiException && e.statusCode == 401) {
-          // به صفحه ورود برگردانده خواهد شد
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e')));
-        }
-      }
-    }
-  }
-}
-
-// ------------------------------------------------------------
-// صفحه چت
-// ------------------------------------------------------------
-class ChatPage extends StatefulWidget {
-  final Chat chat;
-  ChatPage({required this.chat});
-
-  @override
-  _ChatPageState createState() => _ChatPageState();
-}
-
-class _ChatPageState extends State<ChatPage> {
-  final TextEditingController _messageController = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
-  final FocusNode _focusNode = FocusNode();
-  File? _selectedMedia;
-  int? _replyToId;
-  Timer? _typingTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _scrollToBottom();
-    _messageController.addListener(_onTextChanged);
-  }
-
-  @override
-  void dispose() {
-    _messageController.removeListener(_onTextChanged);
-    _messageController.dispose();
-    _scrollController.dispose();
-    _focusNode.dispose();
-    _typingTimer?.cancel();
-    super.dispose();
-  }
-
-  void _onTextChanged() {
-    final appState = Provider.of<AppState>(context, listen: false);
-    if (_messageController.text.isNotEmpty) {
-      appState.sendTyping(widget.chat.id);
-      _typingTimer?.cancel();
-      _typingTimer = Timer(Duration(milliseconds: 1000), () {});
-    }
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(0);
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final appState = Provider.of<AppState>(context);
-    final messages = appState.messages;
-
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 1,
-        title: Row(
-          children: [
-            CircleAvatar(
-              backgroundImage: widget.chat.type == 'private'
-                  ? (widget.chat.otherUser?.avatarUrl != null ? CachedNetworkImageProvider(widget.chat.otherUser!.avatarUrl!) : null)
-                  : (widget.chat.avatarUrl != null ? CachedNetworkImageProvider(widget.chat.avatarUrl!) : null),
-              child: (widget.chat.type == 'private' && widget.chat.otherUser?.avatarUrl == null)
-                  ? Icon(Icons.person)
-                  : (widget.chat.avatarUrl == null ? Icon(Icons.group) : null),
-            ),
-            SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.chat.type == 'private'
-                        ? (widget.chat.otherUser?.firstName ?? widget.chat.otherUser?.username ?? '')
-                        : (widget.chat.title ?? 'گروه'),
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                  ),
-                  if (appState.typingUsers[widget.chat.id] == true)
-                    Text('در حال تایپ...', style: TextStyle(fontSize: 11, color: Colors.green)),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              if (value == 'search') {
-                _showSearchDialog(context);
-              } else if (value == 'info') {
-                _showChatInfo(context);
-              }
-            },
-            itemBuilder: (ctx) => [
-              PopupMenuItem(value: 'search', child: Text('جستجو')),
-              PopupMenuItem(value: 'info', child: Text('اطلاعات')),
-            ],
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: messages.isEmpty
-                ? Center(child: Text('پیامی وجود ندارد'))
-                : GestureDetector(
-                    onTap: () => FocusScope.of(context).unfocus(),
-                    child: ListView.builder(
-                      reverse: true,
-                      controller: _scrollController,
-                      itemCount: messages.length,
-                      itemBuilder: (context, index) {
-                        final msg = messages[index];
-                        return _buildMessageItem(context, msg, appState);
-                      },
-                    ),
-                  ),
-          ),
-          if (_selectedMedia != null)
-            Container(
-              height: 80,
-              margin: EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.blue),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  Padding(
-                    padding: EdgeInsets.all(4),
-                    child: Image.file(_selectedMedia!, width: 70, height: 70, fit: BoxFit.cover),
-                  ),
-                  Expanded(child: Text('فایل انتخاب شده')),
-                  IconButton(
-                    icon: Icon(Icons.close),
-                    onPressed: () => setState(() => _selectedMedia = null),
-                  ),
-                ],
-              ),
-            ),
-          if (_replyToId != null)
-            Container(
-              padding: EdgeInsets.all(8),
-              color: Colors.grey.shade200,
-              child: Row(
-                children: [
-                  Icon(Icons.reply, color: Colors.blue),
-                  SizedBox(width: 8),
-                  Expanded(child: Text('پاسخ به پیام', style: TextStyle(fontStyle: FontStyle.italic))),
-                  IconButton(
-                    icon: Icon(Icons.close),
-                    onPressed: () => setState(() => _replyToId = null),
-                  ),
-                ],
-              ),
-            ),
-          _buildMessageInput(appState),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMessageItem(BuildContext context, Message msg, AppState appState) {
-    final isMe = msg.sender.id == appState.currentUser?.id;
-    return Container(
-      margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Row(
-        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (!isMe)
-            CircleAvatar(
-              radius: 16,
-              backgroundImage: msg.sender.avatarUrl != null ? CachedNetworkImageProvider(msg.sender.avatarUrl!) : null,
-              child: msg.sender.avatarUrl == null ? Icon(Icons.person, size: 16) : null,
-            ),
-          SizedBox(width: 8),
-          Flexible(
-            child: Container(
-              padding: EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isMe ? Colors.blue.shade100 : Colors.grey.shade200,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  topRight: Radius.circular(16),
-                  bottomLeft: isMe ? Radius.circular(16) : Radius.circular(4),
-                  bottomRight: isMe ? Radius.circular(4) : Radius.circular(16),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!isMe)
-                    Text(
-                      msg.sender.firstName ?? msg.sender.username,
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                    ),
-                  if (msg.replyToId != null)
-                    Container(
-                      margin: EdgeInsets.only(bottom: 4),
-                      padding: EdgeInsets.all(4),
-                      decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(8)),
-                      child: Text('پاسخ به پیام', style: TextStyle(fontSize: 11)),
-                    ),
-                  if (msg.forwardFrom != null)
-                    Text('فوروارد شده', style: TextStyle(fontSize: 11, color: Colors.purple)),
-                  if (msg.mediaUrl != null)
-                    GestureDetector(
-                      onTap: () => _showMediaDialog(msg.mediaUrl!),
-                      child: Container(
-                        width: 200,
-                        height: 200,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          image: DecorationImage(image: CachedNetworkImageProvider(msg.mediaUrl!), fit: BoxFit.cover),
-                        ),
-                      ),
-                    ),
-                  if (msg.text != null && msg.text!.isNotEmpty)
-                    Text(msg.text!),
-                  if (msg.editedAt != null)
-                    Text('ویرایش شده', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(DateFormat.Hm().format(msg.createdAt.toLocal()), style: TextStyle(fontSize: 10, color: Colors.grey)),
-                      if (msg.pinned)
-                        Padding(padding: EdgeInsets.only(left: 4), child: Icon(Icons.push_pin, size: 12, color: Colors.blue)),
-                    ],
-                  ),
-                  if (msg.reactions.isNotEmpty)
-                    Wrap(
-                      children: msg.reactions.map((r) {
-                        return Container(
-                          margin: EdgeInsets.only(right: 4, top: 4),
-                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(color: Colors.white70, borderRadius: BorderRadius.circular(12)),
-                          child: Text(r.emoji),
-                        );
-                      }).toList(),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          SizedBox(width: 8),
-          if (isMe)
-            PopupMenuButton<String>(
-              onSelected: (value) async {
-                if (value == 'edit') {
-                  _showEditDialog(msg);
-                } else if (value == 'delete') {
-                  await appState.deleteMessage(msg.id);
-                } else if (value == 'pin') {
-                  if (msg.pinned) {
-                    await appState.unpinMessage(widget.chat.id);
-                  } else {
-                    await appState.pinMessage(widget.chat.id, msg.id);
-                  }
-                } else if (value == 'reply') {
-                  setState(() => _replyToId = msg.id);
-                } else if (value == 'forward') {
-                  _showForwardDialog(msg.id);
-                }
-              },
-              icon: Icon(Icons.more_vert, size: 16),
-              itemBuilder: (ctx) => [
-                PopupMenuItem(value: 'reply', child: Text('پاسخ')),
-                PopupMenuItem(value: 'edit', child: Text('ویرایش')),
-                PopupMenuItem(value: 'delete', child: Text('حذف')),
-                PopupMenuItem(value: 'pin', child: Text(msg.pinned ? 'لغو پین' : 'پین')),
-                PopupMenuItem(value: 'forward', child: Text('فوروارد')),
-              ],
-            )
-          else
-            PopupMenuButton<String>(
-              onSelected: (value) async {
-                if (value == 'reply') {
-                  setState(() => _replyToId = msg.id);
-                } else if (value == 'react') {
-                  _showEmojiPicker(msg.id);
-                }
-              },
-              icon: Icon(Icons.more_vert, size: 16),
-              itemBuilder: (ctx) => [
-                PopupMenuItem(value: 'reply', child: Text('پاسخ')),
-                PopupMenuItem(value: 'react', child: Text('واکنش')),
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-
-  void _showEditDialog(Message msg) {
-    final controller = TextEditingController(text: msg.text);
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text('ویرایش پیام'),
-          content: TextField(controller: controller, maxLines: 3),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: Text('لغو')),
-            ElevatedButton(
-              onPressed: () async {
-                final appState = Provider.of<AppState>(context, listen: false);
-                await appState.editMessage(msg.id, controller.text);
-                Navigator.pop(ctx);
-              },
-              child: Text('ذخیره'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showEmojiPicker(int messageId) {
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) {
-        return Container(
-          height: 300,
-          child: EmojiPicker(
-            onEmojiSelected: (category, emoji) {
-              Navigator.pop(ctx);
-              Provider.of<AppState>(context, listen: false).addReaction(messageId, emoji.emoji);
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  void _showForwardDialog(int messageId) {
-    final appState = Provider.of<AppState>(context, listen: false);
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text('انتخاب چت برای فوروارد'),
-          content: Container(
-            width: double.maxFinite,
-            height: 300,
-            child: ListView.builder(
-              itemCount: appState.chats.length,
-              itemBuilder: (context, index) {
-                final chat = appState.chats[index];
-                return ListTile(
-                  title: Text(chat.title ?? 'چت'),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    await appState.forwardMessage(messageId, [chat.id]);
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فوروارد شد')));
-                  },
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _showMediaDialog(String url) {
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return Dialog(
-          child: InteractiveViewer(child: CachedNetworkImage(imageUrl: url)),
-        );
-      },
-    );
-  }
-
-  void _showSearchDialog(BuildContext context) {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text('جستجو در چت'),
-          content: TextField(controller: controller, decoration: InputDecoration(hintText: 'عبارت مورد نظر')),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: Text('لغو')),
-            ElevatedButton(
-              onPressed: () async {
-                final query = controller.text;
-                Navigator.pop(ctx);
-                final appState = Provider.of<AppState>(context, listen: false);
-                try {
-                  final results = await appState.client!.searchMessages(query, chatId: widget.chat.id);
-                  _showSearchResults(results);
-                } catch (e) {
-                  if (e is ApiException && e.statusCode == 401) {
-                    // قبلاً مدیریت شده
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e')));
-                  }
-                }
-              },
-              child: Text('جستجو'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showSearchResults(List<Message> results) {
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text('نتایج جستجو'),
-          content: Container(
-            width: double.maxFinite,
-            height: 300,
-            child: ListView.builder(
-              itemCount: results.length,
-              itemBuilder: (context, index) {
-                final msg = results[index];
-                return ListTile(
-                  title: Text(msg.text ?? 'رسانه'),
-                  subtitle: Text(DateFormat.yMd().add_jm().format(msg.createdAt.toLocal())),
-                  onTap: () => Navigator.pop(ctx),
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _showChatInfo(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) {
-        return Container(
-          padding: EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('اطلاعات چت', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              Divider(),
-              ListTile(leading: Icon(Icons.group), title: Text('تعداد شرکت‌کنندگان: ${widget.chat.participants.length}')),
-              if (widget.chat.type != 'private')
-                ListTile(leading: Icon(Icons.admin_panel_settings), title: Text('ساخته شده توسط: ${widget.chat.createdBy}')),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildMessageInput(AppState appState) {
-    return Container(
-      padding: EdgeInsets.all(8),
-      color: Colors.white,
-      child: Row(
-        children: [
-          IconButton(icon: Icon(Icons.attach_file), onPressed: _pickMedia),
-          Expanded(
-            child: TextField(
-              controller: _messageController,
-              focusNode: _focusNode,
-              maxLines: null,
-              decoration: InputDecoration(
-                hintText: 'پیام...',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(30)),
-                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              ),
-            ),
-          ),
-          IconButton(icon: Icon(Icons.send), onPressed: _sendMessage),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _pickMedia() async {
+  Future<void> loadBookmarks(int userId) async {
+    _isLoading = true;
+    notifyListeners();
     try {
-      final status = await Permission.photos.request();
-      if (!status.isGranted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('دسترسی به گالری داده نشد')));
-        return;
-      }
-      final picker = ImagePicker();
-      final XFile? picked = await picker.pickImage(source: ImageSource.gallery);
-      if (picked != null) setState(() => _selectedMedia = File(picked.path));
+      _bookmarks = await ApiService().getBookmarks(userId);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا در انتخاب تصویر')));
+      print(e);
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
   }
 
-  void _sendMessage() async {
-    final text = _messageController.text.trim();
-    if (text.isEmpty && _selectedMedia == null) return;
-
-    final appState = Provider.of<AppState>(context, listen: false);
-    try {
-      await appState.sendMessage(
-        widget.chat.id,
-        text: text.isNotEmpty ? text : null,
-        mediaFile: _selectedMedia,
-        replyTo: _replyToId,
-      );
-      _messageController.clear();
-      setState(() {
-        _selectedMedia = null;
-        _replyToId = null;
-      });
-      _scrollToBottom();
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        // قبلاً مدیریت شده
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا در ارسال: $e')));
-      }
-    }
+  void toggleBookmarkInList(int postId) {
+    // If bookmark removed, remove from list
+    _bookmarks.removeWhere((p) => p.id == postId);
+    notifyListeners();
   }
 }
 
-// ------------------------------------------------------------
-// صفحه پروفایل
-// ------------------------------------------------------------
-class ProfilePage extends StatefulWidget {
-  @override
-  _ProfilePageState createState() => _ProfilePageState();
-}
-
-class _ProfilePageState extends State<ProfilePage> {
-  final _formKey = GlobalKey<FormState>();
-  final _firstNameController = TextEditingController();
-  final _lastNameController = TextEditingController();
-  final _bioController = TextEditingController();
-  final _phoneController = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    final user = context.read<AppState>().currentUser;
-    _firstNameController.text = user?.firstName ?? '';
-    _lastNameController.text = user?.lastName ?? '';
-    _bioController.text = user?.bio ?? '';
-    _phoneController.text = user?.phone ?? '';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final appState = Provider.of<AppState>(context);
-    final user = appState.currentUser;
-
-    return Scaffold(
-      appBar: AppBar(title: Text('پروفایل'), backgroundColor: Colors.white),
-      body: SingleChildScrollView(
-        padding: EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              Stack(
-                children: [
-                  CircleAvatar(
-                    radius: 50,
-                    backgroundImage: user?.avatarUrl != null ? CachedNetworkImageProvider(user!.avatarUrl!) : null,
-                    child: user?.avatarUrl == null ? Icon(Icons.person, size: 50) : null,
-                  ),
-                  Positioned(
-                    bottom: 0,
-                    right: 0,
-                    child: CircleAvatar(
-                      radius: 18,
-                      backgroundColor: Colors.blue,
-                      child: IconButton(
-                        icon: Icon(Icons.camera_alt, size: 16, color: Colors.white),
-                        onPressed: _pickAndUploadAvatar,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: 20),
-              TextFormField(
-                controller: _firstNameController,
-                decoration: InputDecoration(labelText: 'نام', border: OutlineInputBorder()),
-              ),
-              SizedBox(height: 12),
-              TextFormField(
-                controller: _lastNameController,
-                decoration: InputDecoration(labelText: 'نام خانوادگی', border: OutlineInputBorder()),
-              ),
-              SizedBox(height: 12),
-              TextFormField(
-                controller: _bioController,
-                maxLines: 3,
-                decoration: InputDecoration(labelText: 'بیوگرافی', border: OutlineInputBorder()),
-              ),
-              SizedBox(height: 12),
-              TextFormField(
-                controller: _phoneController,
-                keyboardType: TextInputType.phone,
-                decoration: InputDecoration(labelText: 'تلفن', border: OutlineInputBorder()),
-              ),
-              SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _updateProfile,
-                child: Text('ذخیره تغییرات'),
-                style: ElevatedButton.styleFrom(minimumSize: Size(double.infinity, 45)),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _pickAndUploadAvatar() async {
-    final appState = Provider.of<AppState>(context, listen: false);
-    try {
-      final status = await Permission.photos.request();
-      if (!status.isGranted) return;
-      final picker = ImagePicker();
-      final XFile? picked = await picker.pickImage(source: ImageSource.gallery);
-      if (picked != null) {
-        appState.setLoading(true);
-        final file = File(picked.path);
-        final newUrl = await appState.client!.uploadAvatar(file);
-        final updatedUser = User(
-          id: appState.currentUser!.id,
-          username: appState.currentUser!.username,
-          firstName: appState.currentUser!.firstName,
-          lastName: appState.currentUser!.lastName,
-          bio: appState.currentUser!.bio,
-          avatarUrl: newUrl,
-          isOnline: appState.currentUser!.isOnline,
-          lastSeen: appState.currentUser!.lastSeen,
-          phone: appState.currentUser!.phone,
-        );
-        appState.setCurrentUser(updatedUser);
-        appState.setLoading(false);
-        setState(() {});
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e')));
-    }
-  }
-
-  void _updateProfile() async {
-    if (_formKey.currentState!.validate()) {
-      final appState = Provider.of<AppState>(context, listen: false);
-      try {
-        await appState.client!.updateUser(
-          firstName: _firstNameController.text.isNotEmpty ? _firstNameController.text : null,
-          lastName: _lastNameController.text.isNotEmpty ? _lastNameController.text : null,
-          bio: _bioController.text.isNotEmpty ? _bioController.text : null,
-          phone: _phoneController.text.isNotEmpty ? _phoneController.text : null,
-        );
-        final updated = await appState.client!.getUser(appState.currentUser!.id);
-        appState.setCurrentUser(updated);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('پروفایل به‌روزرسانی شد')));
-        Navigator.pop(context);
-      } catch (e) {
-        if (e is ApiException && e.statusCode == 401) {
-          // قبلاً مدیریت شده
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e')));
-        }
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _firstNameController.dispose();
-    _lastNameController.dispose();
-    _bioController.dispose();
-    _phoneController.dispose();
-    super.dispose();
-  }
-}
-
-// ------------------------------------------------------------
-// برنامه اصلی
-// ------------------------------------------------------------
+// ------------------- Main App --------------------
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Permission.notification.request();
-  final appState = AppState();
-  await appState.initFromStorage();
-  runApp(MyApp(appState: appState));
+  runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  final AppState appState;
-  MyApp({required this.appState});
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => PostsProvider()),
+        ChangeNotifierProvider(create: (_) => BookmarksProvider()),
+      ],
+      child: Consumer<ThemeProvider>(
+        builder: (context, themeProvider, _) {
+          return MaterialApp(
+            title: 'Tweeter',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData.light(useMaterial3: true).copyWith(
+              colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+              appBarTheme: AppBarTheme(centerTitle: true),
+            ),
+            darkTheme: ThemeData.dark(useMaterial3: true).copyWith(
+              colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.dark),
+            ),
+            themeMode: themeProvider.themeMode,
+            home: SplashScreen(),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ------------------- Splash Screen ----------------
+class SplashScreen extends StatefulWidget {
+  @override
+  _SplashScreenState createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _navigate();
+  }
+
+  _navigate() async {
+    await Future.delayed(Duration(seconds: 2));
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    if (auth.currentUser != null) {
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => MainScreen()));
+    } else {
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => RegisterScreen()));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // تنظیم navigatorKey برای استفاده در AppState
-    appState.navigatorKey = GlobalKey<NavigatorState>();
+    return Scaffold(
+      body: Center(
+        child: Lottie.asset(
+          'assets/splash.json', // You need to add a lottie file or use a placeholder
+          width: 200,
+          height: 200,
+        ),
+      ),
+    );
+  }
+}
 
-    return ChangeNotifierProvider.value(
-      value: appState,
-      child: MaterialApp(
-        navigatorKey: appState.navigatorKey,
-        title: 'Nokhodgram',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          primarySwatch: Colors.blue,
-          fontFamily: 'Vazir', // در صورت تمایل فونت فارسی اضافه کنید
+// ------------------- Register Screen --------------
+class RegisterScreen extends StatefulWidget {
+  @override
+  _RegisterScreenState createState() => _RegisterScreenState();
+}
+
+class _RegisterScreenState extends State<RegisterScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _usernameController = TextEditingController();
+  final _bioController = TextEditingController();
+  File? _profileImage;
+  bool _isLoading = false;
+
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery);
+    if (picked != null) {
+      setState(() => _profileImage = File(picked.path));
+    }
+  }
+
+  Future<void> _register() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _isLoading = true);
+    try {
+      await Provider.of<AuthProvider>(context, listen: false)
+          .register(_usernameController.text.trim(), _bioController.text.trim(), _profileImage);
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => MainScreen()));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Register')),
+      body: Padding(
+        padding: EdgeInsets.all(16),
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              GestureDetector(
+                onTap: _pickImage,
+                child: CircleAvatar(
+                  radius: 50,
+                  backgroundImage: _profileImage != null ? FileImage(_profileImage!) : null,
+                  child: _profileImage == null ? Icon(Icons.camera_alt, size: 40) : null,
+                ),
+              ),
+              SizedBox(height: 20),
+              TextFormField(
+                controller: _usernameController,
+                decoration: InputDecoration(labelText: 'Username', border: OutlineInputBorder()),
+                validator: (v) => v!.isEmpty ? 'Required' : null,
+              ),
+              SizedBox(height: 16),
+              TextFormField(
+                controller: _bioController,
+                decoration: InputDecoration(labelText: 'Bio (optional)', border: OutlineInputBorder()),
+                maxLines: 3,
+              ),
+              SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: _isLoading ? null : _register,
+                child: _isLoading ? CircularProgressIndicator() : Text('Register'),
+              ),
+            ],
+          ),
         ),
-        home: Consumer<AppState>(
-          builder: (context, state, child) {
-            if (state.currentUser != null) {
-              return MainPage();
-            }
-            return AuthPage();
+      ),
+    );
+  }
+}
+
+// ------------------- Main Screen (Bottom Navigation) ----
+class MainScreen extends StatefulWidget {
+  @override
+  _MainScreenState createState() => _MainScreenState();
+}
+
+class _MainScreenState extends State<MainScreen> {
+  int _currentIndex = 0;
+  final List<Widget> _screens = [
+    FeedScreen(),
+    UploadScreen(),
+    BookmarksScreen(),
+    ProfileScreen(),
+    SettingsScreen(),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _screens[_currentIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (i) => setState(() => _currentIndex = i),
+        type: BottomNavigationBarType.fixed,
+        items: [
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Feed'),
+          BottomNavigationBarItem(icon: Icon(Icons.add), label: 'Upload'),
+          BottomNavigationBarItem(icon: Icon(Icons.bookmark), label: 'Bookmarks'),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
+          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
+        ],
+      ),
+    );
+  }
+}
+
+// ------------------- Feed Screen ------------------
+class FeedScreen extends StatefulWidget {
+  @override
+  _FeedScreenState createState() => _FeedScreenState();
+}
+
+class _FeedScreenState extends State<FeedScreen> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Provider.of<PostsProvider>(context, listen: false).loadPosts(refresh: true);
+    });
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      Provider.of<PostsProvider>(context, listen: false).loadPosts();
+    }
+  }
+
+  Future<void> _refresh() async {
+    await Provider.of<PostsProvider>(context, listen: false).loadPosts(refresh: true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = Provider.of<AuthProvider>(context);
+    return Scaffold(
+      appBar: AppBar(title: Text('Feed'), actions: [
+        IconButton(icon: Icon(Icons.refresh), onPressed: _refresh),
+      ]),
+      body: Consumer<PostsProvider>(
+        builder: (context, provider, _) {
+          if (provider.posts.isEmpty && provider.isLoading) {
+            return Center(child: CircularProgressIndicator());
+          }
+          return RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.builder(
+              controller: _scrollController,
+              itemCount: provider.posts.length + (provider.hasMore ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (index == provider.posts.length) {
+                  return Center(child: Padding(
+                    padding: EdgeInsets.all(8),
+                    child: CircularProgressIndicator(),
+                  ));
+                }
+                final post = provider.posts[index];
+                return PostCard(post: post, currentUserId: auth.currentUser?.id);
+              },
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ------------------- Post Card Widget ------------
+class PostCard extends StatefulWidget {
+  final Post post;
+  final int? currentUserId;
+
+  PostCard({required this.post, required this.currentUserId});
+
+  @override
+  _PostCardState createState() => _PostCardState();
+}
+
+class _PostCardState extends State<PostCard> {
+  late Post _post;
+  bool _isLiking = false;
+  bool _isBookmarking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _post = widget.post;
+  }
+
+  Future<void> _toggleLike() async {
+    if (_isLiking || widget.currentUserId == null) return;
+    setState(() => _isLiking = true);
+    try {
+      bool liked = await ApiService().toggleLike(_post.id, widget.currentUserId!);
+      setState(() {
+        _post.likedByUser = liked;
+        _post.likesCount += liked ? 1 : -1;
+      });
+      // Update in provider if needed
+      Provider.of<PostsProvider>(context, listen: false).updatePostInFeed(_post);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      setState(() => _isLiking = false);
+    }
+  }
+
+  Future<void> _toggleBookmark() async {
+    if (_isBookmarking || widget.currentUserId == null) return;
+    setState(() => _isBookmarking = true);
+    try {
+      bool bookmarked = await ApiService().toggleBookmark(_post.id, widget.currentUserId!);
+      setState(() => _post.bookmarkedByUser = bookmarked);
+      Provider.of<PostsProvider>(context, listen: false).updatePostInFeed(_post);
+      // Also update bookmarks list if needed
+      if (!bookmarked) {
+        Provider.of<BookmarksProvider>(context, listen: false).toggleBookmarkInList(_post.id);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      setState(() => _isBookmarking = false);
+    }
+  }
+
+  void _openPostDetail() {
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => PostDetailScreen(postId: _post.id, currentUserId: widget.currentUserId),
+    )).then((updated) {
+      if (updated != null && updated is Post) {
+        setState(() => _post = updated);
+        Provider.of<PostsProvider>(context, listen: false).updatePostInFeed(updated);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.all(8),
+      child: InkWell(
+        onTap: _openPostDetail,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // User header
+            ListTile(
+              leading: CircleAvatar(
+                backgroundImage: _post.userProfileImage != null
+                    ? CachedNetworkImageProvider('$baseUrl/${_post.userProfileImage}')
+                    : null,
+                child: _post.userProfileImage == null ? Icon(Icons.person) : null,
+              ),
+              title: Row(
+                children: [
+                  Text(_post.username, style: TextStyle(fontWeight: FontWeight.bold)),
+                  if (_post.userIsBlue) SizedBox(width: 4),
+                  if (_post.userIsBlue) Icon(Icons.verified, color: Colors.blue, size: 16),
+                ],
+              ),
+              subtitle: Text(DateFormat.yMMMd().add_jm().format(_post.createdAt)),
+            ),
+            // Caption
+            if (_post.caption.isNotEmpty)
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(_post.caption),
+              ),
+            // Media preview
+            _buildMediaPreview(),
+            // Stats and actions
+            Padding(
+              padding: EdgeInsets.all(8),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: Icon(_post.likedByUser ? Icons.favorite : Icons.favorite_border,
+                        color: _post.likedByUser ? Colors.red : null),
+                    onPressed: _toggleLike,
+                  ),
+                  Text('${_post.likesCount}'),
+                  SizedBox(width: 16),
+                  IconButton(
+                    icon: Icon(Icons.comment),
+                    onPressed: _openPostDetail,
+                  ),
+                  Text('${_post.commentsCount}'),
+                  Spacer(),
+                  IconButton(
+                    icon: Icon(_post.bookmarkedByUser ? Icons.bookmark : Icons.bookmark_border),
+                    onPressed: _toggleBookmark,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMediaPreview() {
+    String fullUrl = '$baseUrl/${_post.mediaPath}';
+    String? thumbUrl = _post.thumbnailPath != null ? '$baseUrl/${_post.thumbnailPath}' : null;
+    switch (_post.mediaType) {
+      case 'image':
+        return CachedNetworkImage(
+          imageUrl: fullUrl,
+          placeholder: (_, __) => Container(height: 200, color: Colors.grey[300]),
+          errorWidget: (_, __, ___) => Container(height: 200, color: Colors.grey, child: Icon(Icons.broken_image)),
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: 200,
+        );
+      case 'video':
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            if (thumbUrl != null)
+              CachedNetworkImage(
+                imageUrl: thumbUrl,
+                height: 200,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              )
+            else
+              Container(height: 200, color: Colors.black, child: Center(child: Icon(Icons.video_library, size: 50))),
+            Icon(Icons.play_circle_fill, size: 50, color: Colors.white70),
+          ],
+        );
+      case 'audio':
+        return Container(
+          height: 60,
+          color: Colors.grey[200],
+          child: Row(
+            children: [
+              SizedBox(width: 16),
+              Icon(Icons.audio_file, size: 40),
+              SizedBox(width: 8),
+              Expanded(child: Text('Audio file', overflow: TextOverflow.ellipsis)),
+            ],
+          ),
+        );
+      default:
+        return Container(
+          height: 60,
+          color: Colors.grey[200],
+          child: Row(
+            children: [
+              SizedBox(width: 16),
+              Icon(Icons.insert_drive_file, size: 40),
+              SizedBox(width: 8),
+              Expanded(child: Text('File', overflow: TextOverflow.ellipsis)),
+            ],
+          ),
+        );
+    }
+  }
+}
+
+// ------------------- Post Detail Screen ----------
+class PostDetailScreen extends StatefulWidget {
+  final int postId;
+  final int? currentUserId;
+  PostDetailScreen({required this.postId, required this.currentUserId});
+
+  @override
+  _PostDetailScreenState createState() => _PostDetailScreenState();
+}
+
+class _PostDetailScreenState extends State<PostDetailScreen> {
+  late Future<Post> _postFuture;
+  final TextEditingController _commentController = TextEditingController();
+  bool _isSubmittingComment = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshPost();
+  }
+
+  void _refreshPost() {
+    setState(() {
+      _postFuture = ApiService().getPost(widget.postId, currentUserId: widget.currentUserId);
+    });
+  }
+
+  Future<void> _addComment() async {
+    if (_commentController.text.trim().isEmpty || widget.currentUserId == null) return;
+    setState(() => _isSubmittingComment = true);
+    try {
+      await ApiService().addComment(widget.postId, widget.currentUserId!, _commentController.text.trim());
+      _commentController.clear();
+      _refreshPost();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      setState(() => _isSubmittingComment = false);
+    }
+  }
+
+  Future<void> _editComment(Comment comment) async {
+    String? newContent = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        TextEditingController controller = TextEditingController(text: comment.content);
+        return AlertDialog(
+          title: Text('Edit Comment'),
+          content: TextField(controller: controller, autofocus: true),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: Text('Save')),
+          ],
+        );
+      },
+    );
+    if (newContent != null && newContent.isNotEmpty && newContent != comment.content) {
+      try {
+        await ApiService().updateComment(comment.id, widget.currentUserId!, newContent);
+        _refreshPost();
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    }
+  }
+
+  Future<void> _deleteComment(int commentId) async {
+    bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete Comment'),
+        content: Text('Are you sure?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text('Delete')),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      try {
+        await ApiService().deleteComment(commentId, widget.currentUserId!);
+        _refreshPost();
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Post')),
+      body: FutureBuilder<Post>(
+        future: _postFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text('Error: ${snapshot.error}'));
+          }
+          final post = snapshot.data!;
+          return Column(
+            children: [
+              Expanded(
+                child: ListView(
+                  children: [
+                    // Post card (similar to above but without actions)
+                    _buildPostDetails(post),
+                    Divider(),
+                    // Comments section
+                    Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('Comments', style: Theme.of(context).textTheme.titleLarge),
+                    ),
+                    ...post.comments?.map((c) => _buildCommentTile(c, post.userId)).toList() ?? [],
+                  ],
+                ),
+              ),
+              // Comment input
+              if (widget.currentUserId != null)
+                Container(
+                  padding: EdgeInsets.all(8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _commentController,
+                          decoration: InputDecoration(
+                            hintText: 'Write a comment...',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: _isSubmittingComment ? SizedBox(width: 24, height: 24, child: CircularProgressIndicator()) : Icon(Icons.send),
+                        onPressed: _addComment,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildPostDetails(Post post) {
+    // Reuse similar layout as PostCard but without interactive elements (or with limited)
+    return Card(
+      margin: EdgeInsets.all(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListTile(
+            leading: CircleAvatar(
+              backgroundImage: post.userProfileImage != null
+                  ? CachedNetworkImageProvider('$baseUrl/${post.userProfileImage}')
+                  : null,
+              child: post.userProfileImage == null ? Icon(Icons.person) : null,
+            ),
+            title: Row(
+              children: [
+                Text(post.username, style: TextStyle(fontWeight: FontWeight.bold)),
+                if (post.userIsBlue) SizedBox(width: 4),
+                if (post.userIsBlue) Icon(Icons.verified, color: Colors.blue, size: 16),
+              ],
+            ),
+            subtitle: Text(DateFormat.yMMMd().add_jm().format(post.createdAt)),
+          ),
+          if (post.caption.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Text(post.caption),
+            ),
+          _buildMediaFull(post),
+          Padding(
+            padding: EdgeInsets.all(8),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: Icon(post.likedByUser ? Icons.favorite : Icons.favorite_border,
+                      color: post.likedByUser ? Colors.red : null),
+                  onPressed: () async {
+                    if (widget.currentUserId == null) return;
+                    bool liked = await ApiService().toggleLike(post.id, widget.currentUserId!);
+                    setState(() {
+                      post.likedByUser = liked;
+                      post.likesCount += liked ? 1 : -1;
+                    });
+                  },
+                ),
+                Text('${post.likesCount}'),
+                SizedBox(width: 16),
+                Icon(Icons.comment),
+                Text('${post.commentsCount}'),
+                Spacer(),
+                IconButton(
+                  icon: Icon(post.bookmarkedByUser ? Icons.bookmark : Icons.bookmark_border),
+                  onPressed: () async {
+                    if (widget.currentUserId == null) return;
+                    bool bookmarked = await ApiService().toggleBookmark(post.id, widget.currentUserId!);
+                    setState(() => post.bookmarkedByUser = bookmarked);
+                    if (!bookmarked) {
+                      Provider.of<BookmarksProvider>(context, listen: false).toggleBookmarkInList(post.id);
+                    }
+                  },
+                ),
+                if (post.userId == widget.currentUserId)
+                  PopupMenuButton(
+                    icon: Icon(Icons.more_vert),
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        child: Text('Edit Caption'),
+                        onTap: () async {
+                          String? newCaption = await showDialog<String>(
+                            context: context,
+                            builder: (ctx) {
+                              TextEditingController c = TextEditingController(text: post.caption);
+                              return AlertDialog(
+                                title: Text('Edit Caption'),
+                                content: TextField(controller: c, autofocus: true),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(ctx), child: Text('Cancel')),
+                                  TextButton(onPressed: () => Navigator.pop(ctx, c.text), child: Text('Save')),
+                                ],
+                              );
+                            },
+                          );
+                          if (newCaption != null) {
+                            await ApiService().updatePost(post.id, widget.currentUserId!, newCaption);
+                            _refreshPost();
+                          }
+                        },
+                      ),
+                      PopupMenuItem(
+                        child: Text('Delete Post'),
+                        onTap: () async {
+                          bool? confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: Text('Delete Post'),
+                              content: Text('Are you sure?'),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text('Cancel')),
+                                TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text('Delete')),
+                              ],
+                            ),
+                          );
+                          if (confirm == true) {
+                            await ApiService().deletePost(post.id, widget.currentUserId!);
+                            Provider.of<PostsProvider>(context, listen: false).removePostFromFeed(post.id);
+                            Navigator.pop(context, true); // signal deletion
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMediaFull(Post post) {
+    String fullUrl = '$baseUrl/${post.mediaPath}';
+    if (post.mediaType == 'image') {
+      return GestureDetector(
+        onTap: () => _showFullScreenImage(fullUrl),
+        child: CachedNetworkImage(
+          imageUrl: fullUrl,
+          placeholder: (_, __) => Container(height: 300, color: Colors.grey[300]),
+          errorWidget: (_, __, ___) => Container(height: 300, color: Colors.grey, child: Icon(Icons.broken_image)),
+          fit: BoxFit.contain,
+          width: double.infinity,
+        ),
+      );
+    } else if (post.mediaType == 'video') {
+      return Container(
+        height: 300,
+        child: Chewie(
+          controller: ChewieController(
+            videoPlayerController: VideoPlayerController.network(fullUrl),
+            autoPlay: false,
+            looping: false,
+            aspectRatio: 16/9,
+          ),
+        ),
+      );
+    } else if (post.mediaType == 'audio') {
+      return Container(
+        height: 80,
+        color: Colors.grey[200],
+        child: Row(
+          children: [
+            SizedBox(width: 16),
+            Icon(Icons.audio_file, size: 40),
+            Expanded(child: Text('Audio Player')),
+            IconButton(
+              icon: Icon(Icons.play_arrow),
+              onPressed: () {
+                // Simple audio play
+              },
+            ),
+          ],
+        ),
+      );
+    } else {
+      return Container(
+        height: 80,
+        color: Colors.grey[200],
+        child: Row(
+          children: [
+            SizedBox(width: 16),
+            Icon(Icons.insert_drive_file, size: 40),
+            Expanded(child: Text('File: ${post.mediaPath.split('/').last}')),
+            IconButton(
+              icon: Icon(Icons.download),
+              onPressed: () async {
+                try {
+                  await ApiService().downloadFile(fullUrl, post.mediaPath.split('/').last);
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+                }
+              },
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  void _showFullScreenImage(String url) {
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(),
+        body: Center(
+          child: InteractiveViewer(
+            child: CachedNetworkImage(imageUrl: url),
+          ),
+        ),
+      ),
+    ));
+  }
+
+  Widget _buildCommentTile(Comment comment, int postOwnerId) {
+    bool isOwner = comment.userId == widget.currentUserId;
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundImage: comment.userProfileImage != null
+            ? CachedNetworkImageProvider('$baseUrl/${comment.userProfileImage}')
+            : null,
+        child: comment.userProfileImage == null ? Icon(Icons.person) : null,
+      ),
+      title: Row(
+        children: [
+          Text(comment.username, style: TextStyle(fontWeight: FontWeight.bold)),
+          if (comment.userIsBlue) SizedBox(width: 4),
+          if (comment.userIsBlue) Icon(Icons.verified, color: Colors.blue, size: 16),
+        ],
+      ),
+      subtitle: Text(comment.content),
+      trailing: isOwner
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(icon: Icon(Icons.edit, size: 18), onPressed: () => _editComment(comment)),
+                IconButton(icon: Icon(Icons.delete, size: 18), onPressed: () => _deleteComment(comment.id)),
+              ],
+            )
+          : null,
+    );
+  }
+}
+
+// ------------------- Upload Screen ---------------
+class UploadScreen extends StatefulWidget {
+  @override
+  _UploadScreenState createState() => _UploadScreenState();
+}
+
+class _UploadScreenState extends State<UploadScreen> {
+  final _captionController = TextEditingController();
+  File? _selectedFile;
+  bool _isUploading = false;
+
+  Future<void> _pickFile() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles();
+    if (result != null) {
+      setState(() => _selectedFile = File(result.files.single.path!));
+    }
+  }
+
+  Future<void> _upload() async {
+    if (_selectedFile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Select a file')));
+      return;
+    }
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    if (auth.currentUser == null) return;
+    setState(() => _isUploading = true);
+    try {
+      await ApiService().uploadPost(auth.currentUser!.id, _captionController.text, _selectedFile!);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Uploaded successfully')));
+      _captionController.clear();
+      setState(() => _selectedFile = null);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      setState(() => _isUploading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Upload Post')),
+      body: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextField(
+              controller: _captionController,
+              decoration: InputDecoration(labelText: 'Caption', border: OutlineInputBorder()),
+              maxLines: 3,
+            ),
+            SizedBox(height: 20),
+            if (_selectedFile != null)
+              Container(
+                height: 100,
+                child: Row(
+                  children: [
+                    Icon(Icons.insert_drive_file, size: 50),
+                    SizedBox(width: 8),
+                    Expanded(child: Text(_selectedFile!.path.split('/').last)),
+                    IconButton(icon: Icon(Icons.close), onPressed: () => setState(() => _selectedFile = null)),
+                  ],
+                ),
+              ),
+            ElevatedButton(
+              onPressed: _pickFile,
+              child: Text('Select File'),
+            ),
+            SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _isUploading ? null : _upload,
+              child: _isUploading ? CircularProgressIndicator() : Text('Upload'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ------------------- Bookmarks Screen ------------
+class BookmarksScreen extends StatefulWidget {
+  @override
+  _BookmarksScreenState createState() => _BookmarksScreenState();
+}
+
+class _BookmarksScreenState extends State<BookmarksScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      if (auth.currentUser != null) {
+        Provider.of<BookmarksProvider>(context, listen: false).loadBookmarks(auth.currentUser!.id);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = Provider.of<AuthProvider>(context);
+    if (auth.currentUser == null) {
+      return Center(child: Text('Please log in'));
+    }
+    return Scaffold(
+      appBar: AppBar(title: Text('Bookmarks')),
+      body: Consumer<BookmarksProvider>(
+        builder: (context, provider, _) {
+          if (provider.bookmarks.isEmpty && !provider._isLoading) {
+            return Center(child: Text('No bookmarks yet'));
+          }
+          return ListView.builder(
+            itemCount: provider.bookmarks.length,
+            itemBuilder: (ctx, i) {
+              final post = provider.bookmarks[i];
+              return PostCard(post: post, currentUserId: auth.currentUser!.id);
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ------------------- Profile Screen --------------
+class ProfileScreen extends StatefulWidget {
+  @override
+  _ProfileScreenState createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  // For simplicity, show current user's info and their posts.
+  // Could fetch user posts by calling /posts and filtering? But backend doesn't have user-specific endpoint.
+  // We'll just show user details and maybe list their posts by filtering locally? Better to implement a /user/<id>/posts endpoint, but not available.
+  // Instead we'll just show profile info and provide logout.
+  @override
+  Widget build(BuildContext context) {
+    final auth = Provider.of<AuthProvider>(context);
+    final user = auth.currentUser;
+    if (user == null) return Center(child: Text('Not logged in'));
+    return Scaffold(
+      appBar: AppBar(title: Text('Profile'), actions: [
+        IconButton(
+          icon: Icon(Icons.logout),
+          onPressed: () async {
+            await auth.logout();
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => RegisterScreen()));
           },
+        )
+      ]),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircleAvatar(
+              radius: 50,
+              backgroundImage: user.profileImage != null
+                  ? CachedNetworkImageProvider('$baseUrl/${user.profileImage}')
+                  : null,
+              child: user.profileImage == null ? Icon(Icons.person, size: 50) : null,
+            ),
+            SizedBox(height: 16),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(user.username, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                if (user.isBlue) SizedBox(width: 4),
+                if (user.isBlue) Icon(Icons.verified, color: Colors.blue, size: 24),
+              ],
+            ),
+            SizedBox(height: 8),
+            Text(user.bio.isNotEmpty ? user.bio : 'No bio'),
+            SizedBox(height: 32),
+            // Could add a list of user's posts here if we had an endpoint.
+          ],
         ),
+      ),
+    );
+  }
+}
+
+// ------------------- Settings Screen -------------
+class SettingsScreen extends StatefulWidget {
+  @override
+  _SettingsScreenState createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  @override
+  Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    return Scaffold(
+      appBar: AppBar(title: Text('Settings')),
+      body: ListView(
+        children: [
+          ListTile(
+            title: Text('Theme'),
+            subtitle: Text(themeProvider.themeMode.toString().split('.').last),
+            trailing: DropdownButton<ThemeMode>(
+              value: themeProvider.themeMode,
+              onChanged: (mode) {
+                if (mode != null) themeProvider.setThemeMode(mode);
+              },
+              items: ThemeMode.values.map((mode) {
+                return DropdownMenuItem(
+                  value: mode,
+                  child: Text(mode.toString().split('.').last),
+                );
+              }).toList(),
+            ),
+          ),
+          // Add more settings here
+        ],
       ),
     );
   }
