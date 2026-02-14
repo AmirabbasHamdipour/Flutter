@@ -396,6 +396,10 @@ class MessagingClient {
       if (data.containsKey('error')) {
         throw ApiException(data['error'] as String, 200);
       }
+      // اگر مپ خالی است، احتمالاً خطای احراز هویت
+      if (data.isEmpty) {
+        throw ApiException('Empty response - unauthorized', 401);
+      }
       // Try to extract list from known keys
       if (data.containsKey('users') && data['users'] is List) {
         return (data['users'] as List)
