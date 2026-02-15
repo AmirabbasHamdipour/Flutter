@@ -170,7 +170,7 @@ class Comment {
       content: json['content'],
       createdAt: DateTime.parse(json['created_at']),
       username: json['username'],
-      profileImage: json['profile_image'],
+      userProfileImage: json['profile_image'], // fixed parameter name
       userIsBlue: json['is_blue'] == 1,
       likesCount: json['likes_count'] ?? 0,
       likedByUser: json['liked_by_user'] ?? false,
@@ -774,7 +774,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('Welcome Back', style: Theme.of(context).textTheme.headline5),
+                      Text('Welcome Back', style: Theme.of(context).textTheme.headlineMedium), // fixed
                       SizedBox(height: 24),
                       TextFormField(
                         controller: _usernameController,
@@ -1515,7 +1515,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     PostCard(post: post),
                     Padding(
                       padding: EdgeInsets.all(8),
-                      child: Text('Comments', style: Theme.of(context).textTheme.headline6),
+                      child: Text('Comments', style: Theme.of(context).textTheme.titleLarge), // fixed
                     ),
                     if (post.comments != null)
                       ...post.comments!.map((c) => CommentTile(
@@ -2220,7 +2220,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(user.username, style: Theme.of(context).textTheme.headline6),
+                  Text(user.username, style: Theme.of(context).textTheme.titleLarge), // fixed
                   if (user.isBlue) Icon(Icons.verified, color: Colors.blue),
                 ],
               ),
@@ -2263,7 +2263,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildStat(String label, int count) {
     return Column(
       children: [
-        Text(count.toString(), style: Theme.of(context).textTheme.headline6),
+        Text(count.toString(), style: Theme.of(context).textTheme.titleLarge), // fixed
         Text(label),
       ],
     );
