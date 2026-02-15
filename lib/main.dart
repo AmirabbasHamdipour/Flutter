@@ -9,11 +9,9 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:dio/dio.dart';
 import 'package:dio/dio.dart' as dio;
 import 'package:path_provider/path_provider.dart';
-import 'package:image_cropper/image_cropper.dart';
 import 'package:video_player/video_player.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -27,6 +25,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:animations/animations.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+// ویرایش حرفه‌ای
+import 'package:photo_editor_sdk/photo_editor_sdk.dart';
+import 'package:video_editor/video_editor.dart';
+import 'package:gallery_saver/gallery_saver.dart';
+import 'package:chewie/chewie.dart';
 
 // -----------------------------------------------------------------------------
 // Environment & Constants
@@ -1591,7 +1595,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
 }
 
 // -----------------------------------------------------------------------------
-// Upload Post Page
+// Upload Post Page with Professional Editing
 // -----------------------------------------------------------------------------
 class UploadPostPage extends StatefulWidget {
   @override
@@ -1605,55 +1609,109 @@ class _UploadPostPageState extends State<UploadPostPage> {
   double _uploadProgress = 0;
   bool _uploading = false;
 
+  // برای نمایش ویدیو
+  VideoPlayerController? _videoController;
+  ChewieController? _chewieController;
+
+  @override
+  void dispose() {
+    _videoController?.dispose();
+    _chewieController?.dispose();
+    super.dispose();
+  }
+
   Future<void> _pickMedia() async {
     final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-    if (pickedFile != null) {
-      _selectedMedia = File(pickedFile.path);
-      _mediaType = 'image';
-      _openEditor();
-    } else {
-      final video = await picker.pickVideo(source: ImageSource.gallery);
-      if (video != null) {
-        _selectedMedia = File(video.path);
-        _mediaType = 'video';
-        _openEditor();
+    final pickedImage = await picker.pickImage(source: ImageSource.gallery);
+    if (pickedImage != null) {
+      File imageFile = File(pickedImage.path);
+      // ویرایش حرفه‌ای تصویر
+      File? editedImage = await _editImage(imageFile);
+      if (editedImage != null) {
+        setState(() {
+          _selectedMedia = editedImage;
+          _mediaType = 'image';
+        });
+      }
+      return;
+    }
+
+    final pickedVideo = await picker.pickVideo(source: ImageSource.gallery);
+    if (pickedVideo != null) {
+      File videoFile = File(pickedVideo.path);
+      // ویرایش حرفه‌ای ویدیو
+      File? editedVideo = await _editVideo(videoFile);
+      if (editedVideo != null) {
+        setState(() {
+          _selectedMedia = editedVideo;
+          _mediaType = 'video';
+        });
+        _initializeVideoPlayer(editedVideo);
       }
     }
+  }
+
+  Future<File?> _editImage(File imageFile) async {
+    try {
+      // استفاده از PhotoEditorSDK برای ویرایش تصویر
+      var result = await PESDK.openEditor(image: imageFile.path);
+      if (result != null) {
+        return File(result.image);
+      }
+    } catch (e) {
+      print("Image editing error: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Image editing failed, using original.')),
+      );
+    }
+    return imageFile; // برگشت تصویر اصلی در صورت خطا
+  }
+
+  Future<File?> _editVideo(File videoFile) async {
+    try {
+      // استفاده از video_editor برای ویرایش ویدیو
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => VideoEditor(
+            file: videoFile,
+            // می‌توانید تنظیمات دیگر را اضافه کنید
+          ),
+        ),
+      );
+      if (result != null && result is String) {
+        return File(result);
+      }
+    } catch (e) {
+      print("Video editing error: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Video editing failed, using original.')),
+      );
+    }
+    return videoFile;
+  }
+
+  void _initializeVideoPlayer(File videoFile) {
+    _videoController = VideoPlayerController.file(videoFile);
+    _chewieController = ChewieController(
+      videoPlayerController: _videoController!,
+      aspectRatio: 16 / 9,
+      autoPlay: false,
+      looping: false,
+    );
     setState(() {});
   }
 
-  void _openEditor() async {
-    if (_mediaType == 'image') {
-      CroppedFile? cropped = await ImageCropper().cropImage(
-        sourcePath: _selectedMedia!.path,
-        aspectRatioPresets: [
-          CropAspectRatioPreset.square,
-          CropAspectRatioPreset.ratio3x2,
-          CropAspectRatioPreset.original,
-          CropAspectRatioPreset.ratio4x3,
-          CropAspectRatioPreset.ratio16x9
-        ],
-        uiSettings: [
-          AndroidUiSettings(
-            toolbarTitle: 'Crop Image',
-            toolbarColor: Colors.deepOrange,
-            toolbarWidgetColor: Colors.white,
-            initAspectRatio: CropAspectRatioPreset.original,
-            lockAspectRatio: false,
-          ),
-          IOSUiSettings(
-            title: 'Crop Image',
-          ),
-        ],
-      );
-      if (cropped != null) {
-        setState(() {
-          _selectedMedia = File(cropped.path);
-        });
+  Future<void> _saveToGallery(File file) async {
+    if (await Permission.storage.request().isGranted) {
+      if (_mediaType == 'image') {
+        await GallerySaver.saveImage(file.path);
+      } else if (_mediaType == 'video') {
+        await GallerySaver.saveVideo(file.path);
       }
-    } else if (_mediaType == 'video') {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Video editing not fully implemented')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved to gallery')),
+      );
     }
   }
 
@@ -1688,7 +1746,16 @@ class _UploadPostPageState extends State<UploadPostPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Upload Post')),
+      appBar: AppBar(
+        title: Text('Upload Post'),
+        actions: [
+          if (_selectedMedia != null)
+            IconButton(
+              icon: Icon(Icons.save),
+              onPressed: () => _saveToGallery(_selectedMedia!),
+            ),
+        ],
+      ),
       body: Padding(
         padding: EdgeInsets.all(16),
         child: Column(
@@ -1696,10 +1763,15 @@ class _UploadPostPageState extends State<UploadPostPage> {
             if (_selectedMedia != null)
               _mediaType == 'image'
                   ? Image.file(_selectedMedia!, height: 200)
-                  : Container(height: 200, color: Colors.black, child: Center(child: Text('Video selected'))),
+                  : _chewieController != null
+                      ? Container(
+                          height: 200,
+                          child: Chewie(controller: _chewieController!),
+                        )
+                      : Container(height: 200, color: Colors.black),
             ElevatedButton(
               onPressed: _pickMedia,
-              child: Text('Select Media'),
+              child: Text('Select & Edit Media'),
             ),
             TextField(
               controller: _captionController,
