@@ -24,8 +24,8 @@ plugins {
 
 include(":app")
 
-// patch ffmpeg_kit_flutter_min_gpl برای اضافه کردن namespace
-gradle.beforeSettings { settings ->
+// Patch for ffmpeg_kit_flutter_min_gpl to add namespace
+gradle.beforeSettings {
     val userHome = System.getProperty("user.home")
     val ffmpegPath = "$userHome/.pub-cache/hosted/pub.dev/ffmpeg_kit_flutter_min_gpl-5.1.0/android/build.gradle"
     val ffmpegFile = File(ffmpegPath)
