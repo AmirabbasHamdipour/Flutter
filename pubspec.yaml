@@ -6,52 +6,32 @@ version: 1.0.0+1
 environment:
   sdk: '>=3.0.0 <4.0.0'
 
+
 dependencies:
   flutter:
     sdk: flutter
-
-  # State management & storage
-  provider: ^6.1.2
-  shared_preferences: ^2.3.2
-
-  # Networking
-  http: ^0.13.6  
-  dio: ^5.7.0
-
-  # Image/Video picker
-  image_picker: ^1.1.2
-
-  # Professional editing
-  photo_editor_sdk: ^3.2.0                # ویرایش حرفه‌ای تصاویر
-  video_editor: ^2.4.0                    # ویرایش حرفه‌ای ویدیوها
-
-  # Video player
-  video_player: ^2.9.2
-  chewie: ^1.8.5
-
-  # Save to gallery
+  provider: ^6.0.5
+  shared_preferences: ^2.2.2
+  http: ^1.1.0
+  dio: ^5.4.0
+  image_picker: ^1.0.4
+  image_cropper: ^5.0.1
+  video_trimmer: ^3.0.0
+  file_picker: ^6.1.1
+  path_provider: ^2.1.1
+  permission_handler: ^11.3.0
   gallery_saver: ^2.3.2
-
-  # Caching & display
-  cached_network_image: ^3.4.1
-  photo_view: ^0.15.0
-
-  # Permissions & connectivity
-  permission_handler: ^11.3.1
-  connectivity_plus: ^6.1.0
-
-  # UI & animations
+  cached_network_image: ^3.3.0
+  video_player: ^2.8.1
+  chewie: ^1.7.4
+  audioplayers: ^5.2.1
+  photo_view: ^0.14.0
+  intl: ^0.18.1
   flutter_staggered_animations: ^1.1.0
   shimmer: ^3.0.0
-  google_fonts: ^6.2.1
-  flutter_svg: ^2.0.10+1
+  flutter_switch: ^0.3.2
   animations: ^2.0.11
-  lottie: ^3.1.2
 
-  # Utilities
-  intl: ^0.19.0
-  path_provider: ^2.1.5
-  flutter_dotenv: ^5.2.1
 
 dev_dependencies:
   flutter_test:
