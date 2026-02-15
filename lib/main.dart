@@ -6,7 +6,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -14,8 +14,6 @@ import 'package:dio/dio.dart';
 import 'package:dio/dio.dart' as dio;
 import 'package:path_provider/path_provider.dart';
 import 'package:image_cropper/image_cropper.dart';
-import 'package:image_editor/image_editor.dart';
-import 'package:video_editor/video_editor.dart';
 import 'package:video_player/video_player.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -45,6 +43,8 @@ class User {
   final String? profileImage;
   final bool isBlue;
   final DateTime createdAt;
+  final int postsCount;
+  final int bookmarksCount;
 
   User({
     required this.id,
@@ -53,6 +53,8 @@ class User {
     this.profileImage,
     required this.isBlue,
     required this.createdAt,
+    required this.postsCount,
+    required this.bookmarksCount,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -63,6 +65,8 @@ class User {
       profileImage: json['profile_image'] as String?,
       isBlue: (json['is_blue'] as int) == 1,
       createdAt: DateTime.parse(json['created_at'] as String),
+      postsCount: json['posts_count'] as int? ?? 0,
+      bookmarksCount: json['bookmarks_count'] as int? ?? 0,
     );
   }
 }
@@ -318,10 +322,10 @@ class ApiService {
     }
   }
 
-  Future<Post> getPost(int postId, {int? userId}) async {
+  Future<Map<String, dynamic>> fetchPost(int postId, {int? userId}) async {
     final response = await _dio.get('/post/$postId', queryParameters: userId != null ? {'user_id': userId} : {});
     if (response.statusCode == 200) {
-      return Post.fromJson(response.data);
+      return response.data;
     } else {
       throw Exception(response.data['error'] ?? 'Failed to load post');
     }
@@ -491,8 +495,6 @@ class ApiService {
       throw Exception('Failed to load group messages');
     }
   }
-
-  // Search users (optional, since API doesn't have search, we might implement later)
 }
 
 // -----------------------------------------------------------------------------
@@ -521,7 +523,6 @@ class AuthProvider extends ChangeNotifier {
       try {
         _currentUser = await _apiService.getProfile(_userId!);
       } catch (e) {
-        // maybe token expired? logout
         logout();
       }
     }
@@ -628,7 +629,6 @@ class PostProvider extends ChangeNotifier {
         _currentPage++;
       }
     } catch (e) {
-      // handle error
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -682,9 +682,10 @@ class CommentProvider extends ChangeNotifier {
 
   Future<void> loadComments(int postId, {int? userId}) async {
     try {
-      final post = await _apiService.getPost(postId, userId: userId);
-      _post = post;
-      _comments = post.comments; // assuming comments are included in post JSON
+      final data = await _apiService.fetchPost(postId, userId: userId);
+      _post = Post.fromJson(data);
+      final List<dynamic> commentsJson = data['comments'] ?? [];
+      _comments = commentsJson.map((c) => Comment.fromJson(c)).toList();
       notifyListeners();
     } catch (e) {}
   }
@@ -692,7 +693,6 @@ class CommentProvider extends ChangeNotifier {
   Future<void> addComment(int postId, int userId, String content, {int? parentId}) async {
     try {
       await _apiService.addComment(postId, userId, content, parentId: parentId);
-      // reload comments
       await loadComments(postId, userId: userId);
     } catch (e) {}
   }
@@ -749,7 +749,6 @@ class ChatProvider extends ChangeNotifier {
   Future<void> sendDirectMessage(int senderId, int receiverId, String content, File? media) async {
     try {
       await _apiService.sendDirectMessage(senderId, receiverId, content, media);
-      // refresh messages
       await loadDirectMessages(senderId, receiverId, refresh: true);
     } catch (e) {}
   }
@@ -881,8 +880,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         if (_isLogin) {
           await auth.login(_usernameController.text, _passwordController.text);
         } else {
-          // Register not implemented in this simplified version; you can add registration fields
-          // For now, just login
+          // For simplicity, we only implement login; registration can be added similarly
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Please use login')));
+          setState(() => _isLoading = false);
+          return;
         }
         Navigator.pushReplacementNamed(context, '/main');
       } catch (e) {
@@ -917,7 +918,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('Tweeter', style: Theme.of(context).textTheme.headline4?.copyWith(fontWeight: FontWeight.bold)),
+                      Text('Tweeter', style: Theme.of(context).textTheme.displayLarge?.copyWith(fontWeight: FontWeight.bold)),
                       SizedBox(height: 20),
                       TextFormField(
                         controller: _usernameController,
@@ -996,6 +997,13 @@ class _MainScreenState extends State<MainScreen> {
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
           BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chats'),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => UploadPostPage()),
+        ),
+        child: Icon(Icons.add),
       ),
     );
   }
@@ -1352,7 +1360,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(auth.currentUser!.username, style: Theme.of(context).textTheme.headline6),
+                      Text(auth.currentUser!.username, style: Theme.of(context).textTheme.titleLarge),
                       if (auth.currentUser!.isBlue) Icon(Icons.verified, color: Colors.blue),
                     ],
                   ),
@@ -1361,8 +1369,8 @@ class _ProfilePageState extends State<ProfilePage> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      _buildStat('Posts', auth.currentUser!.postsCount ?? 0),
-                      _buildStat('Bookmarks', auth.currentUser!.bookmarksCount ?? 0),
+                      _buildStat('Posts', auth.currentUser!.postsCount),
+                      _buildStat('Bookmarks', auth.currentUser!.bookmarksCount),
                     ],
                   ),
                   SizedBox(height: 16),
@@ -1370,7 +1378,6 @@ class _ProfilePageState extends State<ProfilePage> {
                     onPressed: () => _editProfile(context),
                     child: Text('Edit Profile'),
                   ),
-                  // maybe show user's posts here
                 ],
               ),
             ),
@@ -1584,11 +1591,8 @@ class _GroupChatPageState extends State<GroupChatPage> {
 }
 
 // -----------------------------------------------------------------------------
-// Additional widgets for uploading with editor (simplified)
+// Upload Post Page
 // -----------------------------------------------------------------------------
-// We need to add upload post page. This can be accessed from a floating action button.
-// We'll add a simple upload page.
-
 class UploadPostPage extends StatefulWidget {
   @override
   _UploadPostPageState createState() => _UploadPostPageState();
@@ -1607,10 +1611,8 @@ class _UploadPostPageState extends State<UploadPostPage> {
     if (pickedFile != null) {
       _selectedMedia = File(pickedFile.path);
       _mediaType = 'image';
-      // Optionally open editor
       _openEditor();
     } else {
-      // try video
       final video = await picker.pickVideo(source: ImageSource.gallery);
       if (video != null) {
         _selectedMedia = File(video.path);
@@ -1623,7 +1625,6 @@ class _UploadPostPageState extends State<UploadPostPage> {
 
   void _openEditor() async {
     if (_mediaType == 'image') {
-      // Use image_cropper
       CroppedFile? cropped = await ImageCropper().cropImage(
         sourcePath: _selectedMedia!.path,
         aspectRatioPresets: [
@@ -1652,9 +1653,6 @@ class _UploadPostPageState extends State<UploadPostPage> {
         });
       }
     } else if (_mediaType == 'video') {
-      // Use video_editor
-      // This is a simplified placeholder; video_editor requires more setup.
-      // We'll just show a message.
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Video editing not fully implemented')));
     }
   }
@@ -1721,10 +1719,6 @@ class _UploadPostPageState extends State<UploadPostPage> {
             ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _pickMedia,
-        child: Icon(Icons.add),
       ),
     );
   }
