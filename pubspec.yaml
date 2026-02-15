@@ -15,12 +15,12 @@ dependencies:
   http: ^0.13.6
   dio: ^5.4.0
   image_picker: ^1.0.4
-  image_cropper: ^4.0.1   # downgraded from ^5.0.1
+  image_cropper: ^4.0.1
   video_trimmer: ^3.0.0
   file_picker: ^6.1.1
   path_provider: ^2.1.1
   permission_handler: ^11.3.0
-  gallery_saver: ^2.3.2
+  gal: ^2.3.0                # replaces gallery_saver
   cached_network_image: ^3.3.0
   video_player: ^2.8.1
   chewie: ^1.7.4
@@ -31,7 +31,6 @@ dependencies:
   shimmer: ^3.0.0
   flutter_switch: ^0.3.2
   animations: ^2.0.11
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
