@@ -13,7 +13,7 @@ import 'package:video_trimmer/video_trimmer.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:gallery_saver/gallery_saver.dart';
+import 'package:gal/gal.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
@@ -170,7 +170,7 @@ class Comment {
       content: json['content'],
       createdAt: DateTime.parse(json['created_at']),
       username: json['username'],
-      userProfileImage: json['profile_image'],
+      profileImage: json['profile_image'],
       userIsBlue: json['is_blue'] == 1,
       likesCount: json['likes_count'] ?? 0,
       likedByUser: json['liked_by_user'] ?? false,
@@ -595,7 +595,7 @@ class UserProvider extends ChangeNotifier {
   int? get userId => _userId;
   String? get username => _username;
 
-  Future<void loadUser() async {
+  Future<void> loadUser() async {
     final prefs = await SharedPreferences.getInstance();
     _userId = prefs.getInt('user_id');
     _username = prefs.getString('username');
@@ -610,7 +610,7 @@ class UserProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void login(int userId, String username) async {
+  Future<void> login(int userId, String username) async {
     _userId = userId;
     _username = username;
     final prefs = await SharedPreferences.getInstance();
@@ -620,7 +620,7 @@ class UserProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void logout() async {
+  Future<void> logout() async {
     _userId = null;
     _username = null;
     _currentUser = null;
@@ -630,7 +630,7 @@ class UserProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void refreshProfile() async {
+  Future<void> refreshProfile() async {
     if (_userId != null) {
       _currentUser = await ApiService().getProfile(_userId!);
       notifyListeners();
@@ -1119,6 +1119,45 @@ class _PostCardState extends State<PostCard> {
     });
   }
 
+  Future<void> _downloadMedia() async {
+    if (_post.mediaPath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No media to download')));
+      return;
+    }
+
+    try {
+      // Request permission if needed
+      if (!await Gal.hasAccess()) {
+        await Gal.requestAccess();
+      }
+
+      final url = '$baseUrl/${_post.mediaPath}';
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/${_post.mediaPath!.split('/').last}');
+      await Dio().download(url, file.path);
+
+      if (_post.mediaType == 'image') {
+        await Gal.putImage(file.path);
+      } else if (_post.mediaType == 'video') {
+        await Gal.putVideo(file.path);
+      } else {
+        // For audio/files, you can use share or another method
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('File downloaded to ${file.path}')),
+        );
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved to gallery')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Download failed: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -1180,7 +1219,7 @@ class _PostCardState extends State<PostCard> {
                 Spacer(),
                 IconButton(
                   icon: Icon(Icons.download),
-                  onPressed: () => _downloadMedia(),
+                  onPressed: _downloadMedia,
                 ),
               ],
             ),
@@ -1188,28 +1227,6 @@ class _PostCardState extends State<PostCard> {
         ),
       ),
     );
-  }
-
-  Future<void> _downloadMedia() async {
-    if (_post.mediaPath == null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No media to download')));
-      return;
-    }
-    try {
-      final url = '$baseUrl/${_post.mediaPath}';
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/${_post.mediaPath!.split('/').last}');
-      await Dio().download(url, file.path);
-      if (_post.mediaType == 'image' || _post.mediaType == 'video') {
-        await GallerySaver.saveFile(file.path);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saved to gallery')));
-      } else {
-        // just file, maybe open share
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Downloaded to $file')));
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Download failed: $e')));
-    }
   }
 }
 
