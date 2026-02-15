@@ -15,7 +15,7 @@ dependencies:
   shared_preferences: ^2.3.2
 
   # Networking
-  http: ^1.2.2
+  http: ^0.13.6  
   dio: ^5.7.0
 
   # Image/Video picker
