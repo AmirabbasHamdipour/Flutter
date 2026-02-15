@@ -1,41 +1,57 @@
-name: Nokhodgram
-description: A new Flutter project.
-publish_to: none
+name: tweeter_client
+description: A beautiful Tweeter client app.
+publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.10.8
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
+
+  # State management & storage
   provider: ^6.1.1
   shared_preferences: ^2.2.2
+
+  # Networking
   http: ^1.1.0
   dio: ^5.4.0
+
+  # Image/Video picker & editor
   image_picker: ^1.0.4
   file_picker: ^6.1.1
-  path_provider: ^2.1.1
   image_cropper: ^5.0.1
   video_player: ^2.8.1
   just_audio: ^0.9.36
+
+  # Caching & display
   cached_network_image: ^3.3.0
   photo_view: ^0.14.0
+
+  # Permissions & connectivity
   permission_handler: ^11.0.1
   connectivity_plus: ^5.0.2
+
+  # UI & animations
   flutter_staggered_animations: ^1.1.0
   shimmer: ^3.0.0
-  intl: ^0.18.1
-  google_fonts: ^4.0.4
+  google_fonts: ^6.2.1   # نسخه به‌روزرسانی‌شده
   flutter_svg: ^2.0.9
   animations: ^2.0.8
-  flutter_dotenv: ^5.1.0
   lottie: ^2.7.0
+
+  # Utilities
+  intl: ^0.18.1
+  path_provider: ^2.1.1
+  flutter_dotenv: ^5.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^3.0.0
 
 flutter:
   uses-material-design: true
+  assets:
+    - .env
