@@ -1,12 +1,11 @@
 pluginManagement {
-    val flutterSdkPath =
-        run {
-            val properties = java.util.Properties()
-            file("local.properties").inputStream().use { properties.load(it) }
-            val flutterSdkPath = properties.getProperty("flutter.sdk")
-            require(flutterSdkPath != null) { "flutter.sdk not set in local.properties" }
-            flutterSdkPath
-        }
+    val flutterSdkPath = run {
+        val properties = java.util.Properties()
+        file("local.properties").inputStream().use { properties.load(it) }
+        val flutterSdkPath = properties.getProperty("flutter.sdk")
+        require(flutterSdkPath != null) { "flutter.sdk not set in local.properties" }
+        flutterSdkPath
+    }
 
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
@@ -25,19 +24,24 @@ plugins {
 
 include(":app")
 
-// اضافه کردن namespace به ffmpeg_kit_flutter_min_gpl
+// patch ffmpeg_kit_flutter_min_gpl برای اضافه کردن namespace
 gradle.beforeSettings { settings ->
-    def ffmpegPath = settings.settings.rootDir.path + '/../.pub-cache/hosted/pub.dev/ffmpeg_kit_flutter_min_gpl-5.1.0/android/build.gradle'
-    def ffmpegFile = new File(ffmpegPath)
+    val userHome = System.getProperty("user.home")
+    val ffmpegPath = "$userHome/.pub-cache/hosted/pub.dev/ffmpeg_kit_flutter_min_gpl-5.1.0/android/build.gradle"
+    val ffmpegFile = File(ffmpegPath)
     if (ffmpegFile.exists()) {
-        def content = ffmpegFile.text
-        if (!content.contains('namespace')) {
-            def newContent = content.replace(
+        val content = ffmpegFile.readText()
+        if (!content.contains("namespace")) {
+            val newContent = content.replace(
                 "android {",
-                "android {\n    namespace 'com.arthenica.ffmpegkit.flutter.min_gpl'"
+                "android {\n    namespace \"com.arthenica.ffmpegkit.flutter.min_gpl\""
             )
-            ffmpegFile.text = newContent
-            println "Namespace added to ffmpeg_kit_flutter_min_gpl"
+            ffmpegFile.writeText(newContent)
+            println("✅ Namespace added to ffmpeg_kit_flutter_min_gpl")
+        } else {
+            println("ℹ️ Namespace already exists in ffmpeg_kit_flutter_min_gpl")
         }
+    } else {
+        println("⚠️ ffmpeg_kit_flutter_min_gpl build.gradle not found at $ffmpegPath")
     }
 }
