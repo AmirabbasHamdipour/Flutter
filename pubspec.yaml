@@ -20,7 +20,7 @@ dependencies:
 
   # Image/Video picker & editor
   image_picker: ^1.0.4
-  file_picker: ^6.1.1
+  file_picker: ^8.0.3        # نسخه جدید و سازگار با Flutter 3.x
   image_cropper: ^5.0.1
   video_player: ^2.8.1
   just_audio: ^0.9.36
@@ -36,7 +36,7 @@ dependencies:
   # UI & animations
   flutter_staggered_animations: ^1.1.0
   shimmer: ^3.0.0
-  google_fonts: ^6.2.1   # نسخه به‌روزرسانی‌شده
+  google_fonts: ^6.2.1
   flutter_svg: ^2.0.9
   animations: ^2.0.8
   lottie: ^2.7.0
@@ -53,3 +53,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # assets:  <-- در صورت نیاز فایل‌های assets را اضافه کنید
+  #   - .env
