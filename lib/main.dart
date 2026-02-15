@@ -170,7 +170,7 @@ class Comment {
       content: json['content'],
       createdAt: DateTime.parse(json['created_at']),
       username: json['username'],
-      userProfileImage: json['profile_image'], // fixed parameter name
+      userProfileImage: json['profile_image'],
       userIsBlue: json['is_blue'] == 1,
       likesCount: json['likes_count'] ?? 0,
       likedByUser: json['liked_by_user'] ?? false,
@@ -774,7 +774,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('Welcome Back', style: Theme.of(context).textTheme.headlineMedium), // fixed
+                      Text('Welcome Back', style: Theme.of(context).textTheme.headlineMedium),
                       SizedBox(height: 24),
                       TextFormField(
                         controller: _usernameController,
@@ -1440,10 +1440,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 }
 
-// TrimmerView is a separate screen provided by video_trimmer package.
-// We need to import it and use its default UI. For simplicity, we'll just show a placeholder.
-// In a real app, you'd use TrimmerView from the package.
-
 // ----------------------------------------------------------------------------
 // Post Detail Screen
 // ----------------------------------------------------------------------------
@@ -1515,7 +1511,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     PostCard(post: post),
                     Padding(
                       padding: EdgeInsets.all(8),
-                      child: Text('Comments', style: Theme.of(context).textTheme.titleLarge), // fixed
+                      child: Text('Comments', style: Theme.of(context).textTheme.titleLarge),
                     ),
                     if (post.comments != null)
                       ...post.comments!.map((c) => CommentTile(
@@ -2191,7 +2187,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 CircleAvatar(
                   radius: 50,
                   backgroundImage: _newProfileImage != null
-                      ? FileImage(_newProfileImage!)
+                      ? FileImage(_newProfileImage! as File)
                       : (user.profileImage != null
                           ? CachedNetworkImageProvider('$baseUrl/${user.profileImage}')
                           : null),
@@ -2220,7 +2216,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(user.username, style: Theme.of(context).textTheme.titleLarge), // fixed
+                  Text(user.username, style: Theme.of(context).textTheme.titleLarge),
                   if (user.isBlue) Icon(Icons.verified, color: Colors.blue),
                 ],
               ),
@@ -2263,7 +2259,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildStat(String label, int count) {
     return Column(
       children: [
-        Text(count.toString(), style: Theme.of(context).textTheme.titleLarge), // fixed
+        Text(count.toString(), style: Theme.of(context).textTheme.titleLarge),
         Text(label),
       ],
     );
