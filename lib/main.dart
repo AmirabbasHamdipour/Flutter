@@ -9,7 +9,6 @@ import 'package:http/http.dart' as http;
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
-import 'package:video_trimmer/video_trimmer.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -1246,7 +1245,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   double _uploadProgress = 0.0;
 
   final ImagePicker _picker = ImagePicker();
-  final Trimmer _trimmer = Trimmer();
 
   Future<void> _pickMedia() async {
     showModalBottomSheet(
@@ -1326,20 +1324,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 
   Future<void> _editVideo(File videoFile) async {
-    // Use video_trimmer to trim
-    await _trimmer.loadVideo(videoFile: videoFile);
-    final trimmed = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => TrimmerView(_trimmer),
-      ),
-    );
-    if (trimmed != null && trimmed is File) {
-      setState(() {
-        _mediaFile = trimmed;
-        _mediaType = 'video';
-      });
-    }
+    // For now, we skip video trimming due to package issues.
+    // Just use the original video file.
+    setState(() {
+      _mediaFile = videoFile;
+      _mediaType = 'video';
+    });
   }
 
   Future<void> _upload() async {
@@ -2187,7 +2177,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 CircleAvatar(
                   radius: 50,
                   backgroundImage: _newProfileImage != null
-                      ? FileImage(_newProfileImage! as File)
+                      ? FileImage(_newProfileImage!)
                       : (user.profileImage != null
                           ? CachedNetworkImageProvider('$baseUrl/${user.profileImage}')
                           : null),
