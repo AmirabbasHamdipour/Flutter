@@ -1324,8 +1324,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 
   Future<void> _editVideo(File videoFile) async {
-    // For now, we skip video trimming due to package issues.
-    // Just use the original video file.
+    // For simplicity, we skip video trimming to avoid ffmpeg dependency issues.
     setState(() {
       _mediaFile = videoFile;
       _mediaType = 'video';
