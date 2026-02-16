@@ -1293,35 +1293,28 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 
   Future<void> _editImage(File imageFile) async {
-    final cropped = await ImageCropper().cropImage(
-      sourcePath: imageFile.path,
-      aspectRatioPresets: [
-        CropAspectRatioPreset.square,
-        CropAspectRatioPreset.ratio3x2,
-        CropAspectRatioPreset.original,
-        CropAspectRatioPreset.ratio4x3,
-        CropAspectRatioPreset.ratio16x9,
-      ],
-      uiSettings: [
-        AndroidUiSettings(
-          toolbarTitle: 'Crop Image',
-          toolbarColor: Colors.blue,
-          toolbarWidgetColor: Colors.white,
-          initAspectRatio: CropAspectRatioPreset.original,
-          lockAspectRatio: false,
-        ),
-        IOSUiSettings(
-          title: 'Crop Image',
-        ),
-      ],
-    );
-    if (cropped != null) {
-      setState(() {
-        _mediaFile = File(cropped.path);
-        _mediaType = 'image';
-      });
-    }
+  final cropped = await ImageCropper().cropImage(
+    sourcePath: imageFile.path,
+    uiSettings: [
+      AndroidUiSettings(
+        toolbarTitle: 'Crop Image',
+        toolbarColor: Colors.blue,
+        toolbarWidgetColor: Colors.white,
+        initAspectRatio: CropAspectRatioPreset.original,
+        lockAspectRatio: false,
+      ),
+      IOSUiSettings(
+        title: 'Crop Image',
+      ),
+    ],
+  );
+  if (cropped != null) {
+    setState(() {
+      _mediaFile = File(cropped.path);
+      _mediaType = 'image';
+    });
   }
+}
 
   Future<void> _editVideo(File videoFile) async {
     // For simplicity, we skip video trimming to avoid ffmpeg dependency issues.
