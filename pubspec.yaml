@@ -15,12 +15,15 @@ dependencies:
   shared_preferences: ^2.2.2
 
   # Networking
-  http: ^1.1.0               # ارتقا به نسخه 1.x
+  http: ^1.1.0
   dio: ^5.4.0
 
   # Image & Video
   image_picker: ^1.0.4
-  image_cropper: ^5.0.1      # ارتقا به نسخه جدید
+  image_cropper:
+    git:
+      url: https://github.com/hnvn/flutter_image_cropper.git
+      ref: master
   file_picker: ^8.1.0
   path_provider: ^2.1.1
   permission_handler: ^11.3.0
