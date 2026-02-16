@@ -34,6 +34,11 @@ android {
     }
 }
 
+// اضافه کردن آرگومان‌های کامپایلر برای نادیده گرفتن اخطارهای deprecation
+tasks.withType<JavaCompile>().configureEach {
+    options.compilerArgs.addAll(listOf("-Xlint:deprecation", "-Xlint:unchecked"))
+}
+
 flutter {
     source = "../.."
 }
