@@ -2177,7 +2177,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 CircleAvatar(
                   radius: 50,
                   backgroundImage: _newProfileImage != null
-                      ? FileImage(_newProfileImage!)
+                      ? FileImage(_newProfileImage!) as ImageProvider
                       : (user.profileImage != null
                           ? CachedNetworkImageProvider('$baseUrl/${user.profileImage}')
                           : null),
