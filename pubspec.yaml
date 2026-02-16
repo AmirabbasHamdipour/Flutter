@@ -21,8 +21,7 @@ dependencies:
   # Image & Video
   image_picker: ^1.0.4
   image_cropper: ^4.0.1
-  # video_trimmer removed (causes ffmpeg issues)
-  file_picker: ^6.1.1
+  file_picker: ^5.2.11   # <<< تغییر به نسخه 5.2.11
   path_provider: ^2.1.1
   permission_handler: ^11.3.0
   gal: ^2.3.0
