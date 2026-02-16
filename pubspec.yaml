@@ -15,7 +15,7 @@ dependencies:
   http: ^1.1.0
   dio: ^5.4.0
   image_picker: ^1.0.4
-  image_cropper: ^7.0.1          # <<< ارتقا به نسخه 7
+  image_cropper: ^11.0.0          # ارتقا به آخرین نسخه
   file_picker: ^8.1.0
   path_provider: ^2.1.1
   permission_handler: ^11.3.0
