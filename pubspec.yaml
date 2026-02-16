@@ -1,40 +1,48 @@
 name: tweeter_client
-description: A professional Tweeter client with media editing.
+description: A new Flutter project.
 publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
-
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
+
+  # State management & storage
   provider: ^6.0.5
   shared_preferences: ^2.2.2
+
+  # Networking
   http: ^0.13.6
   dio: ^5.4.0
+
+  # Image & Video
   image_picker: ^1.0.4
   image_cropper: ^4.0.1
-  video_trimmer: ^3.0.0
+  # video_trimmer removed (causes ffmpeg issues)
   file_picker: ^6.1.1
   path_provider: ^2.1.1
   permission_handler: ^11.3.0
-  gal: ^2.3.0                # replaces gallery_saver
+  gal: ^2.3.0
   cached_network_image: ^3.3.0
   video_player: ^2.8.1
   chewie: ^1.7.4
   audioplayers: ^5.2.1
   photo_view: ^0.14.0
+
+  # Utilities
   intl: ^0.18.1
   flutter_staggered_animations: ^1.1.0
   shimmer: ^3.0.0
   flutter_switch: ^0.3.2
   animations: ^2.0.11
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
+  flutter_lints: ^3.0.0
 
 flutter:
   uses-material-design: true
