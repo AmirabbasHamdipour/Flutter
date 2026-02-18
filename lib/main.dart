@@ -29,7 +29,6 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 // ویرایش حرفه‌ای (فعلاً غیرفعال)
 // import 'package:photo_editor_sdk/photo_editor_sdk.dart';
 // import 'package:video_editor/video_editor.dart';
-import 'package:gallery_saver/gallery_saver.dart';
 import 'package:chewie/chewie.dart';
 
 // -----------------------------------------------------------------------------
@@ -2166,19 +2165,6 @@ class _UploadPostPageState extends State<UploadPostPage> {
     setState(() {});
   }
 
-  Future<void> _saveToGallery(File file) async {
-    if (await Permission.storage.request().isGranted) {
-      if (_mediaType == 'image') {
-        await GallerySaver.saveImage(file.path);
-      } else if (_mediaType == 'video') {
-        await GallerySaver.saveVideo(file.path);
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved to gallery')),
-      );
-    }
-  }
-
   Future<void> _upload() async {
     if (_selectedMedia == null) return;
     setState(() {
@@ -2212,13 +2198,7 @@ class _UploadPostPageState extends State<UploadPostPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text('Upload Post'),
-        actions: [
-          if (_selectedMedia != null)
-            IconButton(
-              icon: Icon(Icons.save),
-              onPressed: () => _saveToGallery(_selectedMedia!),
-            ),
-        ],
+        // دکمه ذخیره در گالری حذف شد
       ),
       body: Padding(
         padding: EdgeInsets.all(16),
