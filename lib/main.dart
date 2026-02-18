@@ -1,37 +1,54 @@
+// ignore_for_file: prefer_const_constructors, prefer_const_literals_to_create_immutables, use_build_context_synchronously
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
-import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:image_cropper/image_cropper.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:dio/dio.dart';
+import 'package:dio/dio.dart' as dio;
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:gal/gal.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:video_player/video_player.dart';
-import 'package:chewie/chewie.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:photo_view/photo_view.dart';
-import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:shimmer/shimmer.dart';
-import 'package:flutter_switch/flutter_switch.dart';
+import 'package:intl/intl.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:animations/animations.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-// ----------------------------------------------------------------------------
-// Configuration
-// ----------------------------------------------------------------------------
-const String baseUrl = 'https://tweeter.runflare.run';
+// ویرایش حرفه‌ای (فعلاً غیرفعال)
+// import 'package:photo_editor_sdk/photo_editor_sdk.dart';
+// import 'package:video_editor/video_editor.dart';
+import 'package:gallery_saver/gallery_saver.dart';
+import 'package:chewie/chewie.dart';
 
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Environment & Constants
+// -----------------------------------------------------------------------------
+const String baseUrl = 'https://tweeter.runflare.run'; // base URL without trailing slash
+
+// تابع کمکی برای ساخت URL فایل‌های استاتیک
+String getStaticUrl(String? path) {
+  if (path == null || path.isEmpty) return '';
+  if (path.startsWith('http')) return path;
+  // حذف 'static/' اضافی اگر در مسیر وجود دارد
+  String cleanPath = path.startsWith('static/') ? path.substring(7) : path;
+  return '$baseUrl/static/$cleanPath';
+}
+
+// -----------------------------------------------------------------------------
 // Models
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 class User {
   final int id;
   final String username;
@@ -39,8 +56,8 @@ class User {
   final String? profileImage;
   final bool isBlue;
   final DateTime createdAt;
-  int postsCount;
-  int bookmarksCount;
+  final int postsCount;
+  final int bookmarksCount;
 
   User({
     required this.id,
@@ -49,41 +66,33 @@ class User {
     this.profileImage,
     required this.isBlue,
     required this.createdAt,
-    this.postsCount = 0,
-    this.bookmarksCount = 0,
+    required this.postsCount,
+    required this.bookmarksCount,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
-      id: json['id'],
-      username: json['username'],
-      bio: json['bio'],
-      profileImage: json['profile_image'],
-      isBlue: json['is_blue'] == 1,
-      createdAt: DateTime.parse(json['created_at']),
-      postsCount: json['posts_count'] ?? 0,
-      bookmarksCount: json['bookmarks_count'] ?? 0,
+      id: json['id'] as int,
+      username: json['username'] as String,
+      bio: json['bio'] as String?,
+      profileImage: json['profile_image'] as String?,
+      isBlue: (json['is_blue'] as int) == 1,
+      createdAt: DateTime.parse(json['created_at'] as String),
+      postsCount: json['posts_count'] as int? ?? 0,
+      bookmarksCount: json['bookmarks_count'] as int? ?? 0,
     );
   }
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'username': username,
-        'bio': bio,
-        'profile_image': profileImage,
-        'is_blue': isBlue ? 1 : 0,
-        'created_at': createdAt.toIso8601String(),
-      };
 }
 
 class Post {
   final int id;
   final int userId;
-  final String caption;
+  final String? caption;
   final String mediaType; // 'image', 'video', 'audio', 'file', 'text'
   final String? mediaPath;
   final String? thumbnailPath;
   final DateTime createdAt;
+  // Joined fields
   final String username;
   final String? userProfileImage;
   final bool userIsBlue;
@@ -91,12 +100,11 @@ class Post {
   int commentsCount;
   bool likedByUser;
   bool bookmarkedByUser;
-  List<Comment>? comments; // used in detail
 
   Post({
     required this.id,
     required this.userId,
-    required this.caption,
+    this.caption,
     required this.mediaType,
     this.mediaPath,
     this.thumbnailPath,
@@ -108,21 +116,20 @@ class Post {
     this.commentsCount = 0,
     this.likedByUser = false,
     this.bookmarkedByUser = false,
-    this.comments,
   });
 
   factory Post.fromJson(Map<String, dynamic> json) {
     return Post(
-      id: json['id'],
-      userId: json['user_id'],
-      caption: json['caption'] ?? '',
-      mediaType: json['media_type'],
-      mediaPath: json['media_path'],
-      thumbnailPath: json['thumbnail_path'],
-      createdAt: DateTime.parse(json['created_at']),
-      username: json['username'],
-      userProfileImage: json['profile_image'],
-      userIsBlue: json['is_blue'] == 1,
+      id: json['id'] as int,
+      userId: json['user_id'] as int,
+      caption: json['caption'] as String?,
+      mediaType: json['media_type'] as String,
+      mediaPath: json['media_path'] as String?,
+      thumbnailPath: json['thumbnail_path'] as String?,
+      createdAt: DateTime.parse(json['created_at'] as String),
+      username: json['username'] as String,
+      userProfileImage: json['profile_image'] as String?,
+      userIsBlue: (json['is_blue'] as int) == 1,
       likesCount: json['likes_count'] ?? 0,
       commentsCount: json['comments_count'] ?? 0,
       likedByUser: json['liked_by_user'] ?? false,
@@ -138,12 +145,12 @@ class Comment {
   final int? parentId;
   final String content;
   final DateTime createdAt;
+  // Joined fields
   final String username;
   final String? userProfileImage;
   final bool userIsBlue;
   int likesCount;
   bool likedByUser;
-  List<Comment>? replies; // we'll build tree
 
   Comment({
     required this.id,
@@ -157,20 +164,19 @@ class Comment {
     required this.userIsBlue,
     this.likesCount = 0,
     this.likedByUser = false,
-    this.replies,
   });
 
   factory Comment.fromJson(Map<String, dynamic> json) {
     return Comment(
-      id: json['id'],
-      postId: json['post_id'],
-      userId: json['user_id'],
-      parentId: json['parent_id'],
-      content: json['content'],
-      createdAt: DateTime.parse(json['created_at']),
-      username: json['username'],
-      userProfileImage: json['profile_image'],
-      userIsBlue: json['is_blue'] == 1,
+      id: json['id'] as int,
+      postId: json['post_id'] as int,
+      userId: json['user_id'] as int,
+      parentId: json['parent_id'] as int?,
+      content: json['content'] as String,
+      createdAt: DateTime.parse(json['created_at'] as String),
+      username: json['username'] as String,
+      userProfileImage: json['profile_image'] as String?,
+      userIsBlue: (json['is_blue'] as int) == 1,
       likesCount: json['likes_count'] ?? 0,
       likedByUser: json['liked_by_user'] ?? false,
     );
@@ -202,15 +208,15 @@ class DirectMessage {
 
   factory DirectMessage.fromJson(Map<String, dynamic> json) {
     return DirectMessage(
-      id: json['id'],
-      senderId: json['sender_id'],
-      receiverId: json['receiver_id'],
-      content: json['content'],
-      mediaType: json['media_type'],
-      mediaPath: json['media_path'],
-      createdAt: DateTime.parse(json['created_at']),
-      senderUsername: json['sender_username'],
-      senderProfileImage: json['sender_profile_image'],
+      id: json['id'] as int,
+      senderId: json['sender_id'] as int,
+      receiverId: json['receiver_id'] as int,
+      content: json['content'] as String?,
+      mediaType: json['media_type'] as String?,
+      mediaPath: json['media_path'] as String?,
+      createdAt: DateTime.parse(json['created_at'] as String),
+      senderUsername: json['sender_username'] as String,
+      senderProfileImage: json['sender_profile_image'] as String?,
     );
   }
 }
@@ -240,46 +246,36 @@ class GroupMessage {
 
   factory GroupMessage.fromJson(Map<String, dynamic> json) {
     return GroupMessage(
-      id: json['id'],
-      senderId: json['sender_id'],
-      content: json['content'],
-      mediaType: json['media_type'],
-      mediaPath: json['media_path'],
-      createdAt: DateTime.parse(json['created_at']),
-      username: json['username'],
-      userProfileImage: json['profile_image'],
-      userIsBlue: json['is_blue'] == 1,
+      id: json['id'] as int,
+      senderId: json['sender_id'] as int,
+      content: json['content'] as String?,
+      mediaType: json['media_type'] as String?,
+      mediaPath: json['media_path'] as String?,
+      createdAt: DateTime.parse(json['created_at'] as String),
+      username: json['username'] as String,
+      userProfileImage: json['profile_image'] as String?,
+      userIsBlue: (json['is_blue'] as int) == 1,
     );
   }
 }
 
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // API Service
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 class ApiService {
-  final Dio _dio = Dio(BaseOptions(baseUrl: baseUrl));
-  final String? userId;
+  final Dio _dio = Dio(BaseOptions(
+    baseUrl: baseUrl,
+    connectTimeout: Duration(seconds: 30),
+    receiveTimeout: Duration(seconds: 30),
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+  ));
 
-  ApiService({this.userId}) {
-    _dio.interceptors.add(LogInterceptor(responseBody: true));
-  }
-
-  // Helper to add userId to form data or query params
-  Future<Map<String, dynamic>> _addUserId(Map<String, dynamic> data) async {
-    if (userId != null) {
-      data['user_id'] = userId;
-    } else {
-      // try to get from prefs
-      final prefs = await SharedPreferences.getInstance();
-      final storedId = prefs.getInt('user_id');
-      if (storedId != null) data['user_id'] = storedId;
-    }
-    return data;
+  ApiService() {
+    _dio.interceptors.add(LogInterceptor(responseBody: true, requestBody: true));
   }
 
   // Auth
-  Future<Map<String, dynamic>> register(
-      String username, String password, String bio, File? profileImage) async {
+  Future<Map<String, dynamic>> register(String username, String password, String bio, File? profileImage) async {
     var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/register'));
     request.fields['username'] = username;
     request.fields['password'] = password;
@@ -288,33 +284,29 @@ class ApiService {
       request.files.add(await http.MultipartFile.fromPath('profile_image', profileImage.path));
     }
     var response = await request.send();
-    var responseBody = await response.stream.bytesToString();
+    var respStr = await response.stream.bytesToString();
     if (response.statusCode == 201) {
-      return jsonDecode(responseBody);
+      return jsonDecode(respStr);
     } else {
-      throw Exception(responseBody);
+      throw Exception(jsonDecode(respStr)['error'] ?? 'Registration failed');
     }
   }
 
   Future<Map<String, dynamic>> login(String username, String password) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'username': username, 'password': password}),
-    );
+    final response = await _dio.post('/login', data: {'username': username, 'password': password});
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return response.data;
     } else {
-      throw Exception(response.body);
+      throw Exception(response.data['error'] ?? 'Login failed');
     }
   }
 
   Future<User> getProfile(int userId) async {
-    final response = await http.get(Uri.parse('$baseUrl/profile/$userId'));
+    final response = await _dio.get('/profile/$userId');
     if (response.statusCode == 200) {
-      return User.fromJson(jsonDecode(response.body));
+      return User.fromJson(response.data);
     } else {
-      throw Exception(response.body);
+      throw Exception(response.data['error'] ?? 'Failed to load profile');
     }
   }
 
@@ -327,207 +319,139 @@ class ApiService {
     }
     var response = await request.send();
     if (response.statusCode != 200) {
-      throw Exception(await response.stream.bytesToString());
+      var respStr = await response.stream.bytesToString();
+      throw Exception(jsonDecode(respStr)['error'] ?? 'Update failed');
     }
   }
 
   // Posts
   Future<List<Post>> getPosts({int page = 1, int perPage = 10}) async {
-    final response = await http.get(Uri.parse('$baseUrl/posts?page=$page&per_page=$perPage'));
+    final response = await _dio.get('/posts', queryParameters: {'page': page, 'per_page': perPage});
     if (response.statusCode == 200) {
-      List list = jsonDecode(response.body);
-      return list.map((e) => Post.fromJson(e)).toList();
+      List<dynamic> data = response.data;
+      return data.map((e) => Post.fromJson(e)).toList();
     } else {
-      throw Exception(response.body);
+      throw Exception('Failed to load posts');
     }
   }
 
-  Future<Post> getPost(int postId, {int? userId}) async {
-    final uri = userId != null
-        ? Uri.parse('$baseUrl/post/$postId?user_id=$userId')
-        : Uri.parse('$baseUrl/post/$postId');
-    final response = await http.get(uri);
+  Future<Map<String, dynamic>> fetchPost(int postId, {int? userId}) async {
+    final response = await _dio.get('/post/$postId', queryParameters: userId != null ? {'user_id': userId} : {});
     if (response.statusCode == 200) {
-      Map<String, dynamic> json = jsonDecode(response.body);
-      // parse comments
-      if (json['comments'] != null) {
-        List commentsJson = json['comments'];
-        List<Comment> comments = commentsJson.map((c) => Comment.fromJson(c)).toList();
-        // build reply tree
-        Map<int, Comment> commentMap = {};
-        List<Comment> topComments = [];
-        for (var c in comments) {
-          c.replies = [];
-          commentMap[c.id] = c;
-          if (c.parentId == null) {
-            topComments.add(c);
-          } else {
-            commentMap[c.parentId]?.replies?.add(c);
-          }
-        }
-        json['comments'] = topComments;
-      }
-      return Post.fromJson(json);
+      return response.data;
     } else {
-      throw Exception(response.body);
+      throw Exception(response.data['error'] ?? 'Failed to load post');
     }
   }
 
-  Future<Post> uploadPost({
-    required int userId,
-    required String caption,
-    File? media,
-    void Function(int, int)? onProgress, // sent, total
-  }) async {
-    var uri = Uri.parse('$baseUrl/upload');
-    var request = http.MultipartRequest('POST', uri);
-    request.fields['user_id'] = userId.toString();
-    request.fields['caption'] = caption;
-    if (media != null) {
-      var multipartFile = await http.MultipartFile.fromPath('media', media.path);
-      request.files.add(multipartFile);
-    }
-    // Progress is not directly supported by http.MultipartRequest; we use Dio for progress elsewhere.
-    var response = await request.send();
+  Future<Map<String, dynamic>> uploadPost(int userId, String caption, File? media, {ProgressCallback? onProgress}) async {
+    String fileName = media?.path.split('/').last ?? '';
+    String mediaType = _getMediaType(fileName);
+    FormData formData = FormData.fromMap({
+      'user_id': userId,
+      'caption': caption,
+      if (media != null) 'media': await MultipartFile.fromFile(media.path, filename: fileName),
+    });
+    final response = await _dio.post('/upload', data: formData, onSendProgress: onProgress);
     if (response.statusCode == 201) {
-      var responseBody = await response.stream.bytesToString();
-      var json = jsonDecode(responseBody);
-      // We need to fetch the actual post? The response only contains message and post_id.
-      // We'll fetch the post separately.
-      return await getPost(json['post_id'], userId: userId);
+      return response.data;
     } else {
-      throw Exception(await response.stream.bytesToString());
-    }
-  }
-
-  Future<void> deletePost(int postId, int userId) async {
-    final response = await http.delete(Uri.parse('$baseUrl/post/$postId?user_id=$userId'));
-    if (response.statusCode != 200) {
-      throw Exception(response.body);
+      throw Exception(response.data['error'] ?? 'Upload failed');
     }
   }
 
   Future<void> updatePost(int postId, int userId, String newCaption) async {
-    final response = await http.put(
-      Uri.parse('$baseUrl/post/$postId'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': userId, 'caption': newCaption}),
-    );
+    final response = await _dio.put('/post/$postId', data: {'user_id': userId, 'caption': newCaption});
     if (response.statusCode != 200) {
-      throw Exception(response.body);
+      throw Exception(response.data['error'] ?? 'Update failed');
     }
   }
 
+  Future<void> deletePost(int postId, int userId) async {
+    final response = await _dio.delete('/post/$postId', queryParameters: {'user_id': userId});
+    if (response.statusCode != 200) {
+      throw Exception(response.data['error'] ?? 'Delete failed');
+    }
+  }
+
+  String _getMediaType(String filename) {
+    var ext = filename.split('.').last.toLowerCase();
+    if (['jpg', 'jpeg', 'png', 'gif'].contains(ext)) return 'image';
+    if (['mp4', 'avi', 'mov', 'mkv'].contains(ext)) return 'video';
+    if (['mp3', 'wav', 'ogg'].contains(ext)) return 'audio';
+    return 'file';
+  }
+
   // Likes
-  Future<bool> toggleLike(int postId, int userId) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/like'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'post_id': postId, 'user_id': userId}),
-    );
+  Future<Map<String, dynamic>> toggleLike(int postId, int userId) async {
+    final response = await _dio.post('/like', data: {'post_id': postId, 'user_id': userId});
     if (response.statusCode == 200 || response.statusCode == 201) {
-      Map<String, dynamic> json = jsonDecode(response.body);
-      return json['liked'];
+      return response.data;
     } else {
-      throw Exception(response.body);
+      throw Exception('Failed to toggle like');
     }
   }
 
   // Bookmarks
-  Future<bool> toggleBookmark(int postId, int userId) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/bookmark'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'post_id': postId, 'user_id': userId}),
-    );
+  Future<Map<String, dynamic>> toggleBookmark(int postId, int userId) async {
+    final response = await _dio.post('/bookmark', data: {'post_id': postId, 'user_id': userId});
     if (response.statusCode == 200 || response.statusCode == 201) {
-      Map<String, dynamic> json = jsonDecode(response.body);
-      return json['bookmarked'];
+      return response.data;
     } else {
-      throw Exception(response.body);
+      throw Exception('Failed to toggle bookmark');
     }
   }
 
   Future<List<Post>> getBookmarks(int userId) async {
-    final response = await http.get(Uri.parse('$baseUrl/bookmarks/$userId'));
+    final response = await _dio.get('/bookmarks/$userId');
     if (response.statusCode == 200) {
-      List list = jsonDecode(response.body);
-      return list.map((e) => Post.fromJson(e)).toList();
+      List<dynamic> data = response.data;
+      return data.map((e) => Post.fromJson(e)).toList();
     } else {
-      throw Exception(response.body);
+      throw Exception('Failed to load bookmarks');
     }
   }
 
   // Comments
-  Future<Comment> addComment(int postId, int userId, String content, {int? parentId}) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/comment'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'post_id': postId,
-        'user_id': userId,
-        'content': content,
-        'parent_id': parentId,
-      }),
-    );
+  Future<Map<String, dynamic>> addComment(int postId, int userId, String content, {int? parentId}) async {
+    final response = await _dio.post('/comment', data: {
+      'post_id': postId,
+      'user_id': userId,
+      'content': content,
+      if (parentId != null) 'parent_id': parentId,
+    });
     if (response.statusCode == 201) {
-      Map<String, dynamic> json = jsonDecode(response.body);
-      // We need to fetch the full comment? The response only contains comment_id.
-      // For simplicity, we'll return a dummy comment; caller should refresh.
-      return Comment(
-        id: json['comment_id'],
-        postId: postId,
-        userId: userId,
-        content: content,
-        parentId: parentId,
-        createdAt: DateTime.now(),
-        username: '', // will be filled on refresh
-        userIsBlue: false,
-      );
+      return response.data;
     } else {
-      throw Exception(response.body);
+      throw Exception(response.data['error'] ?? 'Failed to add comment');
     }
   }
 
   Future<void> updateComment(int commentId, int userId, String newContent) async {
-    final response = await http.put(
-      Uri.parse('$baseUrl/comment/$commentId'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': userId, 'content': newContent}),
-    );
+    final response = await _dio.put('/comment/$commentId', data: {'user_id': userId, 'content': newContent});
     if (response.statusCode != 200) {
-      throw Exception(response.body);
+      throw Exception(response.data['error'] ?? 'Update failed');
     }
   }
 
   Future<void> deleteComment(int commentId, int userId) async {
-    final response = await http.delete(Uri.parse('$baseUrl/comment/$commentId?user_id=$userId'));
+    final response = await _dio.delete('/comment/$commentId', queryParameters: {'user_id': userId});
     if (response.statusCode != 200) {
-      throw Exception(response.body);
+      throw Exception(response.data['error'] ?? 'Delete failed');
     }
   }
 
-  Future<bool> toggleCommentLike(int commentId, int userId) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/comment/$commentId/like'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': userId}),
-    );
+  Future<Map<String, dynamic>> toggleCommentLike(int commentId, int userId) async {
+    final response = await _dio.post('/comment/$commentId/like', data: {'user_id': userId});
     if (response.statusCode == 200 || response.statusCode == 201) {
-      Map<String, dynamic> json = jsonDecode(response.body);
-      return json['liked'];
+      return response.data;
     } else {
-      throw Exception(response.body);
+      throw Exception('Failed to toggle comment like');
     }
   }
 
   // Direct Messages
-  Future<void> sendDirectMessage({
-    required int senderId,
-    required int receiverId,
-    String content = '',
-    File? media,
-  }) async {
+  Future<Map<String, dynamic>> sendDirectMessage(int senderId, int receiverId, String content, File? media) async {
     var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/direct/send'));
     request.fields['sender_id'] = senderId.toString();
     request.fields['receiver_id'] = receiverId.toString();
@@ -536,29 +460,30 @@ class ApiService {
       request.files.add(await http.MultipartFile.fromPath('media', media.path));
     }
     var response = await request.send();
-    if (response.statusCode != 201) {
-      throw Exception(await response.stream.bytesToString());
+    var respStr = await response.stream.bytesToString();
+    if (response.statusCode == 201) {
+      return jsonDecode(respStr);
+    } else {
+      throw Exception(jsonDecode(respStr)['error'] ?? 'Failed to send message');
     }
   }
 
   Future<List<DirectMessage>> getDirectMessages(int userId, int otherId, {int page = 1, int perPage = 20}) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/direct/messages/$userId?other_id=$otherId&page=$page&per_page=$perPage'),
-    );
+    final response = await _dio.get('/direct/messages/$userId', queryParameters: {
+      'other_id': otherId,
+      'page': page,
+      'per_page': perPage,
+    });
     if (response.statusCode == 200) {
-      List list = jsonDecode(response.body);
-      return list.map((e) => DirectMessage.fromJson(e)).toList();
+      List<dynamic> data = response.data;
+      return data.map((e) => DirectMessage.fromJson(e)).toList();
     } else {
-      throw Exception(response.body);
+      throw Exception('Failed to load messages');
     }
   }
 
   // Group Messages
-  Future<void> sendGroupMessage({
-    required int senderId,
-    String content = '',
-    File? media,
-  }) async {
+  Future<Map<String, dynamic>> sendGroupMessage(int senderId, String content, File? media) async {
     var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/group/send'));
     request.fields['sender_id'] = senderId.toString();
     request.fields['content'] = content;
@@ -566,26 +491,35 @@ class ApiService {
       request.files.add(await http.MultipartFile.fromPath('media', media.path));
     }
     var response = await request.send();
-    if (response.statusCode != 201) {
-      throw Exception(await response.stream.bytesToString());
+    var respStr = await response.stream.bytesToString();
+    if (response.statusCode == 201) {
+      return jsonDecode(respStr);
+    } else {
+      throw Exception(jsonDecode(respStr)['error'] ?? 'Failed to send group message');
     }
   }
 
   Future<List<GroupMessage>> getGroupMessages({int page = 1, int perPage = 20}) async {
-    final response = await http.get(Uri.parse('$baseUrl/group/messages?page=$page&per_page=$perPage'));
+    final response = await _dio.get('/group/messages', queryParameters: {'page': page, 'per_page': perPage});
     if (response.statusCode == 200) {
-      List list = jsonDecode(response.body);
-      return list.map((e) => GroupMessage.fromJson(e)).toList();
+      List<dynamic> data = response.data;
+      return data.map((e) => GroupMessage.fromJson(e)).toList();
     } else {
-      throw Exception(response.body);
+      throw Exception('Failed to load group messages');
     }
   }
+
+  // دریافت لیست کاربران (با فرض اینکه endpoint وجود ندارد، فعلاً فقط با جستجوی دستی)
+  // این متد بعداً تکمیل می‌شود
 }
 
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // Providers
-// ----------------------------------------------------------------------------
-class UserProvider extends ChangeNotifier {
+// -----------------------------------------------------------------------------
+class AuthProvider extends ChangeNotifier {
+  final ApiService _apiService = ApiService();
+  final SharedPreferences _prefs;
+
   User? _currentUser;
   int? _userId;
   String? _username;
@@ -594,107 +528,330 @@ class UserProvider extends ChangeNotifier {
   int? get userId => _userId;
   String? get username => _username;
 
-  Future<void> loadUser() async {
-    final prefs = await SharedPreferences.getInstance();
-    _userId = prefs.getInt('user_id');
-    _username = prefs.getString('username');
+  AuthProvider(this._prefs) {
+    _loadSavedUser();
+  }
+
+  Future<void> _loadSavedUser() async {
+    _userId = _prefs.getInt('user_id');
+    _username = _prefs.getString('username');
     if (_userId != null) {
       try {
-        _currentUser = await ApiService().getProfile(_userId!);
+        _currentUser = await _apiService.getProfile(_userId!);
       } catch (e) {
-        // maybe token expired? clear
-        await logout();
+        logout();
       }
     }
     notifyListeners();
   }
 
-  Future<void> login(int userId, String username) async {
-    _userId = userId;
-    _username = username;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('user_id', userId);
-    await prefs.setString('username', username);
-    _currentUser = await ApiService().getProfile(userId);
-    notifyListeners();
+  Future<void> login(String username, String password) async {
+    try {
+      final data = await _apiService.login(username, password);
+      int userId = data['user_id'];
+      await _prefs.setInt('user_id', userId);
+      await _prefs.setString('username', username);
+      _userId = userId;
+      _username = username;
+      _currentUser = await _apiService.getProfile(userId);
+      notifyListeners();
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> register(String username, String password, String bio, File? profileImage) async {
+    try {
+      final data = await _apiService.register(username, password, bio, profileImage);
+      int userId = data['user_id'];
+      await _prefs.setInt('user_id', userId);
+      await _prefs.setString('username', username);
+      _userId = userId;
+      _username = username;
+      _currentUser = await _apiService.getProfile(userId);
+      notifyListeners();
+    } catch (e) {
+      rethrow;
+    }
   }
 
   Future<void> logout() async {
+    await _prefs.remove('user_id');
+    await _prefs.remove('username');
     _userId = null;
     _username = null;
     _currentUser = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('user_id');
-    await prefs.remove('username');
     notifyListeners();
   }
 
   Future<void> refreshProfile() async {
     if (_userId != null) {
-      _currentUser = await ApiService().getProfile(_userId!);
+      _currentUser = await _apiService.getProfile(_userId!);
       notifyListeners();
+    }
+  }
+
+  Future<void> updateProfile(String? bio, File? profileImage) async {
+    if (_userId != null) {
+      await _apiService.updateProfile(_userId!, bio, profileImage);
+      await refreshProfile();
     }
   }
 }
 
 class ThemeProvider extends ChangeNotifier {
-  bool _isDark = false;
-  bool get isDark => _isDark;
+  final SharedPreferences _prefs;
+  static const String _key = 'isDarkMode';
+  bool _isDarkMode;
 
-  ThemeMode get themeMode => _isDark ? ThemeMode.dark : ThemeMode.light;
+  ThemeProvider(this._prefs) : _isDarkMode = _prefs.getBool(_key) ?? false;
+
+  bool get isDarkMode => _isDarkMode;
 
   void toggleTheme() {
-    _isDark = !_isDark;
+    _isDarkMode = !_isDarkMode;
+    _prefs.setBool(_key, _isDarkMode);
     notifyListeners();
-  }
-
-  Future<void> loadTheme() async {
-    final prefs = await SharedPreferences.getInstance();
-    _isDark = prefs.getBool('isDark') ?? false;
-    notifyListeners();
-  }
-
-  Future<void> saveTheme() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isDark', _isDark);
   }
 }
 
-// ----------------------------------------------------------------------------
-// Main App
-// ----------------------------------------------------------------------------
+class PostProvider extends ChangeNotifier {
+  final ApiService _apiService = ApiService();
+  List<Post> _posts = [];
+  int _currentPage = 1;
+  bool _hasMore = true;
+  bool _isLoading = false;
+
+  List<Post> get posts => _posts;
+  bool get isLoading => _isLoading;
+  bool get hasMore => _hasMore;
+
+  Future<void> loadPosts({bool refresh = false}) async {
+    if (refresh) {
+      _currentPage = 1;
+      _hasMore = true;
+      _posts.clear();
+    }
+    if (_isLoading || !_hasMore) return;
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final newPosts = await _apiService.getPosts(page: _currentPage);
+      if (newPosts.isEmpty) {
+        _hasMore = false;
+      } else {
+        _posts.addAll(newPosts);
+        _currentPage++;
+      }
+    } catch (e) {
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> toggleLike(int postId, int userId) async {
+    try {
+      final result = await _apiService.toggleLike(postId, userId);
+      final index = _posts.indexWhere((p) => p.id == postId);
+      if (index != -1) {
+        _posts[index].likedByUser = result['liked'] ?? false;
+        _posts[index].likesCount += (result['liked'] ? 1 : -1);
+        notifyListeners();
+      }
+    } catch (e) {}
+  }
+
+  Future<void> toggleBookmark(int postId, int userId) async {
+    try {
+      final result = await _apiService.toggleBookmark(postId, userId);
+      final index = _posts.indexWhere((p) => p.id == postId);
+      if (index != -1) {
+        _posts[index].bookmarkedByUser = result['bookmarked'] ?? false;
+        notifyListeners();
+      }
+    } catch (e) {}
+  }
+
+  void updatePostInList(Post updatedPost) {
+    final index = _posts.indexWhere((p) => p.id == updatedPost.id);
+    if (index != -1) {
+      _posts[index] = updatedPost;
+      notifyListeners();
+    }
+  }
+
+  void removePost(int postId) {
+    _posts.removeWhere((p) => p.id == postId);
+    notifyListeners();
+  }
+}
+
+class CommentProvider extends ChangeNotifier {
+  final ApiService _apiService = ApiService();
+  List<Comment> _comments = [];
+  Post? _post;
+
+  List<Comment> get comments => _comments;
+  Post? get post => _post;
+
+  Future<void> loadComments(int postId, {int? userId}) async {
+    try {
+      final data = await _apiService.fetchPost(postId, userId: userId);
+      _post = Post.fromJson(data);
+      final List<dynamic> commentsJson = data['comments'] ?? [];
+      _comments = commentsJson.map((c) => Comment.fromJson(c)).toList();
+      notifyListeners();
+    } catch (e) {}
+  }
+
+  Future<void> addComment(int postId, int userId, String content, {int? parentId}) async {
+    try {
+      await _apiService.addComment(postId, userId, content, parentId: parentId);
+      await loadComments(postId, userId: userId);
+    } catch (e) {}
+  }
+
+  Future<void> toggleLike(int commentId, int userId) async {
+    try {
+      final result = await _apiService.toggleCommentLike(commentId, userId);
+      final index = _comments.indexWhere((c) => c.id == commentId);
+      if (index != -1) {
+        _comments[index].likedByUser = result['liked'] ?? false;
+        _comments[index].likesCount += (result['liked'] ? 1 : -1);
+        notifyListeners();
+      }
+    } catch (e) {}
+  }
+}
+
+class ChatProvider extends ChangeNotifier {
+  final ApiService _apiService = ApiService();
+  List<DirectMessage> _messages = [];
+  List<GroupMessage> _groupMessages = [];
+  int _currentPage = 1;
+  bool _hasMore = true;
+  bool _isLoading = false;
+
+  List<DirectMessage> get messages => _messages;
+  List<GroupMessage> get groupMessages => _groupMessages;
+
+  Future<void> loadDirectMessages(int userId, int otherId, {bool refresh = false}) async {
+    if (refresh) {
+      _currentPage = 1;
+      _hasMore = true;
+      _messages.clear();
+    }
+    if (_isLoading || !_hasMore) return;
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final newMessages = await _apiService.getDirectMessages(userId, otherId, page: _currentPage);
+      if (newMessages.isEmpty) {
+        _hasMore = false;
+      } else {
+        _messages.addAll(newMessages);
+        _currentPage++;
+      }
+    } catch (e) {
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> sendDirectMessage(int senderId, int receiverId, String content, File? media) async {
+    try {
+      await _apiService.sendDirectMessage(senderId, receiverId, content, media);
+      await loadDirectMessages(senderId, receiverId, refresh: true);
+    } catch (e) {}
+  }
+
+  Future<void> loadGroupMessages({bool refresh = false}) async {
+    if (refresh) {
+      _currentPage = 1;
+      _hasMore = true;
+      _groupMessages.clear();
+    }
+    if (_isLoading || !_hasMore) return;
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final newMessages = await _apiService.getGroupMessages(page: _currentPage);
+      if (newMessages.isEmpty) {
+        _hasMore = false;
+      } else {
+        _groupMessages.addAll(newMessages);
+        _currentPage++;
+      }
+    } catch (e) {
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> sendGroupMessage(int senderId, String content, File? media) async {
+    try {
+      await _apiService.sendGroupMessage(senderId, content, media);
+      await loadGroupMessages(refresh: true);
+    } catch (e) {}
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Main App & Themes
+// -----------------------------------------------------------------------------
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Permission.storage.request();
-  runApp(MyApp());
+  await dotenv.load();
+  final prefs = await SharedPreferences.getInstance();
+  runApp(MyApp(prefs: prefs));
 }
 
 class MyApp extends StatelessWidget {
+  final SharedPreferences prefs;
+  const MyApp({Key? key, required this.prefs}) : super(key: key);
+
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => UserProvider()..loadUser()),
-        ChangeNotifierProvider(create: (_) => ThemeProvider()..loadTheme()),
+        ChangeNotifierProvider(create: (_) => AuthProvider(prefs)),
+        ChangeNotifierProvider(create: (_) => ThemeProvider(prefs)),
+        ChangeNotifierProvider(create: (_) => PostProvider()),
+        ChangeNotifierProvider(create: (_) => ChatProvider()),
       ],
       child: Consumer<ThemeProvider>(
-        builder: (context, themeProvider, _) {
+        builder: (context, themeProvider, child) {
           return MaterialApp(
-            title: 'Tweeter',
-            theme: ThemeData.light(),
-            darkTheme: ThemeData.dark(),
-            themeMode: themeProvider.themeMode,
-            home: Consumer<UserProvider>(
-              builder: (context, userProvider, _) {
-                if (userProvider.userId == null) {
-                  return LoginScreen();
+            title: 'Tweeter Client',
+            debugShowCheckedModeBanner: false,
+            themeMode: themeProvider.isDarkMode ? ThemeMode.dark : ThemeMode.light,
+            theme: ThemeData(
+              brightness: Brightness.light,
+              primarySwatch: Colors.blue,
+              fontFamily: GoogleFonts.poppins().fontFamily,
+            ),
+            darkTheme: ThemeData(
+              brightness: Brightness.dark,
+              primarySwatch: Colors.blue,
+              fontFamily: GoogleFonts.poppins().fontFamily,
+            ),
+            home: Consumer<AuthProvider>(
+              builder: (context, auth, _) {
+                if (auth.userId != null) {
+                  return MainScreen();
                 }
-                return MainScreen();
+                return LoginScreen();
               },
             ),
             routes: {
               '/login': (_) => LoginScreen(),
-              '/register': (_) => RegisterScreen(),
+              '/main': (_) => MainScreen(),
             },
           );
         },
@@ -703,9 +860,9 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // Login & Register Screens
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 class LoginScreen extends StatefulWidget {
   @override
   _LoginScreenState createState() => _LoginScreenState();
@@ -715,16 +872,14 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+  bool _isLogin = true;
   bool _isLoading = false;
   late AnimationController _animationController;
-  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
     super.initState();
-    _animationController = AnimationController(vsync: this, duration: Duration(milliseconds: 800));
-    _fadeAnimation = CurvedAnimation(parent: _animationController, curve: Curves.easeIn);
-    _animationController.forward();
+    _animationController = AnimationController(vsync: this, duration: Duration(milliseconds: 300));
   }
 
   @override
@@ -733,18 +888,25 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     super.dispose();
   }
 
-  Future<void> _login() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _isLoading = true);
-    try {
-      final api = ApiService();
-      final res = await api.login(_usernameController.text, _passwordController.text);
-      final userId = res['user_id'];
-      await context.read<UserProvider>().login(userId, _usernameController.text);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      setState(() => _isLoading = false);
+  void _submit() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() => _isLoading = true);
+      try {
+        final auth = Provider.of<AuthProvider>(context, listen: false);
+        if (_isLogin) {
+          await auth.login(_usernameController.text, _passwordController.text);
+        } else {
+          // For simplicity, we only implement login; registration can be added similarly
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Please use login')));
+          setState(() => _isLoading = false);
+          return;
+        }
+        Navigator.pushReplacementNamed(context, '/main');
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      } finally {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -760,12 +922,11 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           ),
         ),
         child: Center(
-          child: FadeTransition(
-            opacity: _fadeAnimation,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.all(24),
             child: Card(
               elevation: 8,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              margin: EdgeInsets.all(24),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Form(
@@ -773,34 +934,42 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('Welcome Back', style: Theme.of(context).textTheme.headlineMedium),
-                      SizedBox(height: 24),
+                      Text('Tweeter', style: Theme.of(context).textTheme.displayLarge?.copyWith(fontWeight: FontWeight.bold)),
+                      SizedBox(height: 20),
                       TextFormField(
                         controller: _usernameController,
-                        decoration: InputDecoration(labelText: 'Username'),
+                        decoration: InputDecoration(labelText: 'Username', prefixIcon: Icon(Icons.person)),
                         validator: (v) => v!.isEmpty ? 'Required' : null,
                       ),
                       SizedBox(height: 16),
                       TextFormField(
                         controller: _passwordController,
-                        decoration: InputDecoration(labelText: 'Password'),
+                        decoration: InputDecoration(labelText: 'Password', prefixIcon: Icon(Icons.lock)),
                         obscureText: true,
                         validator: (v) => v!.isEmpty ? 'Required' : null,
                       ),
                       SizedBox(height: 24),
-                      if (_isLoading) CircularProgressIndicator(),
-                      if (!_isLoading)
-                        ElevatedButton(
-                          onPressed: _login,
-                          child: Text('Login'),
-                          style: ElevatedButton.styleFrom(minimumSize: Size(double.infinity, 45)),
+                      if (_isLoading)
+                        CircularProgressIndicator()
+                      else
+                        Column(
+                          children: [
+                            ElevatedButton(
+                              onPressed: _submit,
+                              style: ElevatedButton.styleFrom(minimumSize: Size(double.infinity, 50)),
+                              child: Text(_isLogin ? 'Login' : 'Register'),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                setState(() {
+                                  _isLogin = !_isLogin;
+                                  _animationController.forward(from: 0);
+                                });
+                              },
+                              child: Text(_isLogin ? 'Need an account? Register' : 'Already have an account? Login'),
+                            ),
+                          ],
                         ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.pushNamed(context, '/register');
-                        },
-                        child: Text('Create new account'),
-                      ),
                     ],
                   ),
                 ),
@@ -813,162 +982,73 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   }
 }
 
-class RegisterScreen extends StatefulWidget {
-  @override
-  _RegisterScreenState createState() => _RegisterScreenState();
-}
-
-class _RegisterScreenState extends State<RegisterScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _bioController = TextEditingController();
-  File? _profileImage;
-  bool _isLoading = false;
-
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
-    if (picked != null) {
-      setState(() => _profileImage = File(picked.path));
-    }
-  }
-
-  Future<void> _register() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _isLoading = true);
-    try {
-      final api = ApiService();
-      await api.register(
-        _usernameController.text,
-        _passwordController.text,
-        _bioController.text,
-        _profileImage,
-      );
-      // Auto login
-      final loginRes = await api.login(_usernameController.text, _passwordController.text);
-      final userId = loginRes['user_id'];
-      await context.read<UserProvider>().login(userId, _usernameController.text);
-      Navigator.pop(context); // go back to main
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Register')),
-      body: Padding(
-        padding: EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            children: [
-              GestureDetector(
-                onTap: _pickImage,
-                child: CircleAvatar(
-                  radius: 50,
-                  backgroundImage: _profileImage != null
-                      ? FileImage(_profileImage!)
-                      : null,
-                  child: _profileImage == null ? Icon(Icons.camera_alt, size: 50) : null,
-                ),
-              ),
-              SizedBox(height: 16),
-              TextFormField(
-                controller: _usernameController,
-                decoration: InputDecoration(labelText: 'Username'),
-                validator: (v) => v!.isEmpty ? 'Required' : null,
-              ),
-              SizedBox(height: 16),
-              TextFormField(
-                controller: _passwordController,
-                decoration: InputDecoration(labelText: 'Password'),
-                obscureText: true,
-                validator: (v) => v!.isEmpty ? 'Required' : null,
-              ),
-              SizedBox(height: 16),
-              TextFormField(
-                controller: _bioController,
-                decoration: InputDecoration(labelText: 'Bio'),
-                maxLines: 3,
-              ),
-              SizedBox(height: 24),
-              if (_isLoading) CircularProgressIndicator(),
-              if (!_isLoading)
-                ElevatedButton(
-                  onPressed: _register,
-                  child: Text('Register'),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ----------------------------------------------------------------------------
-// Main Screen (with bottom navigation)
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Main Screen with Bottom Navigation Bar
+// -----------------------------------------------------------------------------
 class MainScreen extends StatefulWidget {
   @override
   _MainScreenState createState() => _MainScreenState();
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _selectedIndex = 0;
-  final List<Widget> _screens = [
-    HomeFeedScreen(),
-    BookmarksScreen(),
-    DirectMessagesListScreen(),
-    GroupChatScreen(),
-    ProfileScreen(),
+  int _currentIndex = 0;
+  final pages = [
+    FeedPage(),
+    ExplorePage(),
+    ProfilePage(),
+    ChatsPage(),
   ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _screens[_selectedIndex],
+      body: pages[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: (index) => setState(() => _selectedIndex = index),
+        currentIndex: _currentIndex,
+        onTap: (index) => setState(() => _currentIndex = index),
         type: BottomNavigationBarType.fixed,
         items: [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.bookmark), label: 'Bookmarks'),
-          BottomNavigationBarItem(icon: Icon(Icons.mail), label: 'DMs'),
-          BottomNavigationBarItem(icon: Icon(Icons.group), label: 'Group'),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Feed'),
+          BottomNavigationBarItem(icon: Icon(Icons.explore), label: 'Explore'),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
+          BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chats'),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => UploadPostPage()),
+        ),
+        child: Icon(Icons.add),
       ),
     );
   }
 }
 
-// ----------------------------------------------------------------------------
-// Home Feed Screen
-// ----------------------------------------------------------------------------
-class HomeFeedScreen extends StatefulWidget {
+// -----------------------------------------------------------------------------
+// Feed Page
+// -----------------------------------------------------------------------------
+class FeedPage extends StatefulWidget {
   @override
-  _HomeFeedScreenState createState() => _HomeFeedScreenState();
+  _FeedPageState createState() => _FeedPageState();
 }
 
-class _HomeFeedScreenState extends State<HomeFeedScreen> {
-  final List<Post> _posts = [];
-  int _page = 1;
-  bool _hasMore = true;
-  bool _isLoading = false;
-  final ScrollController _scrollController = ScrollController();
+class _FeedPageState extends State<FeedPage> {
+  final _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _fetchPosts();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Provider.of<PostProvider>(context, listen: false).loadPosts(refresh: true);
+    });
     _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      Provider.of<PostProvider>(context, listen: false).loadPosts();
+    }
   }
 
   @override
@@ -977,1263 +1057,506 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
     super.dispose();
   }
 
-  Future<void> _fetchPosts() async {
-    if (_isLoading || !_hasMore) return;
-    setState(() => _isLoading = true);
-    try {
-      final api = ApiService(userId: context.read<UserProvider>().userId?.toString());
-      final newPosts = await api.getPosts(page: _page);
-      if (newPosts.isEmpty) _hasMore = false;
-      setState(() {
-        _posts.addAll(newPosts);
-        _page++;
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-      _fetchPosts();
-    }
-  }
-
-  Future<void> _refresh() async {
-    setState(() {
-      _posts.clear();
-      _page = 1;
-      _hasMore = true;
-    });
-    await _fetchPosts();
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Home'),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.add),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => CreatePostScreen()),
-              ).then((_) => _refresh());
-            },
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView.builder(
-          controller: _scrollController,
-          itemCount: _posts.length + (_isLoading ? 1 : 0),
-          itemBuilder: (context, index) {
-            if (index == _posts.length) {
-              return Center(child: Padding(
-                padding: EdgeInsets.all(8),
-                child: CircularProgressIndicator(),
-              ));
-            }
-            return PostCard(post: _posts[index]);
-          },
-        ),
+    final postProvider = Provider.of<PostProvider>(context);
+    final auth = Provider.of<AuthProvider>(context);
+    return RefreshIndicator(
+      onRefresh: () async => postProvider.loadPosts(refresh: true),
+      child: ListView.builder(
+        controller: _scrollController,
+        itemCount: postProvider.posts.length + (postProvider.hasMore ? 1 : 0),
+        itemBuilder: (ctx, index) {
+          if (index == postProvider.posts.length) {
+            return Center(child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator()));
+          }
+          final post = postProvider.posts[index];
+          return PostCard(post: post, userId: auth.userId!);
+        },
       ),
     );
   }
 }
 
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // Post Card Widget
-// ----------------------------------------------------------------------------
-class PostCard extends StatefulWidget {
+// -----------------------------------------------------------------------------
+class PostCard extends StatelessWidget {
   final Post post;
+  final int userId;
 
-  const PostCard({Key? key, required this.post}) : super(key: key);
-
-  @override
-  _PostCardState createState() => _PostCardState();
-}
-
-class _PostCardState extends State<PostCard> {
-  late Post _post;
-  bool _isLiked = false;
-  bool _isBookmarked = false;
-  int _likesCount = 0;
-  final ApiService _api = ApiService();
-
-  @override
-  void initState() {
-    super.initState();
-    _post = widget.post;
-    _isLiked = widget.post.likedByUser;
-    _isBookmarked = widget.post.bookmarkedByUser;
-    _likesCount = widget.post.likesCount;
-  }
-
-  Future<void> _toggleLike() async {
-    final userId = context.read<UserProvider>().userId;
-    if (userId == null) return;
-    setState(() {
-      _isLiked = !_isLiked;
-      _likesCount += _isLiked ? 1 : -1;
-    });
-    try {
-      final liked = await _api.toggleLike(_post.id, userId);
-      // if server state differs, we could revert, but assume success
-    } catch (e) {
-      // revert
-      setState(() {
-        _isLiked = !_isLiked;
-        _likesCount += _isLiked ? 1 : -1;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    }
-  }
-
-  Future<void> _toggleBookmark() async {
-    final userId = context.read<UserProvider>().userId;
-    if (userId == null) return;
-    setState(() => _isBookmarked = !_isBookmarked);
-    try {
-      await _api.toggleBookmark(_post.id, userId);
-    } catch (e) {
-      setState(() => _isBookmarked = !_isBookmarked);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    }
-  }
-
-  void _openPost() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PostDetailScreen(postId: _post.id),
-      ),
-    ).then((_) {
-      // refresh if needed
-    });
-  }
-
-  Future<void> _downloadMedia() async {
-    if (_post.mediaPath == null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No media to download')));
-      return;
-    }
-
-    try {
-      // Request permission if needed
-      if (!await Gal.hasAccess()) {
-        await Gal.requestAccess();
-      }
-
-      final url = '$baseUrl/${_post.mediaPath}';
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/${_post.mediaPath!.split('/').last}');
-      await Dio().download(url, file.path);
-
-      if (_post.mediaType == 'image') {
-        await Gal.putImage(file.path);
-      } else if (_post.mediaType == 'video') {
-        await Gal.putVideo(file.path);
-      } else {
-        // For audio/files, you can use share or another method
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('File downloaded to ${file.path}')),
-        );
-        return;
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved to gallery')),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Download failed: $e')),
-      );
-    }
-  }
+  const PostCard({Key? key, required this.post, required this.userId}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: InkWell(
-        onTap: _openPost,
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => PostDetailPage(postId: post.id)),
+          );
+        },
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ListTile(
-              leading: CircleAvatar(
-                backgroundImage: _post.userProfileImage != null
-                    ? CachedNetworkImageProvider('$baseUrl/${_post.userProfileImage}')
-                    : null,
-                child: _post.userProfileImage == null ? Icon(Icons.person) : null,
+              leading: GestureDetector(
+                onTap: () {
+                  // رفتن به پروفایل کاربر (اگر کاربر فعلی نیست)
+                  if (post.userId != userId) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => OtherUserProfilePage(userId: post.userId),
+                      ),
+                    );
+                  } else {
+                    // اگر خود کاربر است، به پروفایل خودش برود
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => ProfilePage()));
+                  }
+                },
+                child: CircleAvatar(
+                  backgroundImage: post.userProfileImage != null
+                      ? CachedNetworkImageProvider(getStaticUrl(post.userProfileImage))
+                      : null,
+                  child: post.userProfileImage == null ? Icon(Icons.person) : null,
+                ),
               ),
-              title: Row(
-                children: [
-                  Text(_post.username),
-                  if (_post.userIsBlue)
-                    Icon(Icons.verified, color: Colors.blue, size: 16),
-                ],
+              title: GestureDetector(
+                onTap: () {
+                  if (post.userId != userId) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => OtherUserProfilePage(userId: post.userId),
+                      ),
+                    );
+                  } else {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => ProfilePage()));
+                  }
+                },
+                child: Row(
+                  children: [
+                    Text(post.username),
+                    if (post.userIsBlue)
+                      Icon(Icons.verified, color: Colors.blue, size: 16),
+                  ],
+                ),
               ),
-              subtitle: Text(DateFormat.yMMMd().add_jm().format(_post.createdAt)),
+              subtitle: Text(DateFormat.yMMMd().add_jm().format(post.createdAt)),
             ),
-            if (_post.caption.isNotEmpty)
+            if (post.caption != null && post.caption!.isNotEmpty)
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
-                child: Text(_post.caption),
+                child: Text(post.caption!),
               ),
-            if (_post.mediaType != 'text' && _post.thumbnailPath != null)
-              Padding(
-                padding: EdgeInsets.all(8),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
+            if (post.mediaType == 'image' && post.mediaPath != null)
+              GestureDetector(
+                onTap: () {
+                  // نمایش تصویر بزرگ
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PhotoViewGalleryPage(imageUrl: getStaticUrl(post.mediaPath)),
+                    ),
+                  );
+                },
+                child: Container(
+                  height: 200,
+                  width: double.infinity,
                   child: CachedNetworkImage(
-                    imageUrl: '$baseUrl/${_post.thumbnailPath}',
-                    placeholder: (_, __) => Container(height: 200, color: Colors.grey[300]),
-                    errorWidget: (_, __, ___) => Container(height: 200, color: Colors.grey[300], child: Icon(Icons.broken_image)),
+                    imageUrl: getStaticUrl(post.mediaPath),
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Center(child: CircularProgressIndicator()),
+                    errorWidget: (_, __, ___) => Icon(Icons.broken_image),
                   ),
                 ),
               ),
-            Row(
-              children: [
-                IconButton(
-                  icon: Icon(_isLiked ? Icons.favorite : Icons.favorite_border, color: _isLiked ? Colors.red : null),
-                  onPressed: _toggleLike,
+            if (post.mediaType == 'video' && post.thumbnailPath != null)
+              GestureDetector(
+                onTap: () {
+                  // پخش ویدیو
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => VideoPlayerPage(videoUrl: getStaticUrl(post.mediaPath!)),
+                    ),
+                  );
+                },
+                child: Container(
+                  height: 200,
+                  width: double.infinity,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      CachedNetworkImage(
+                        imageUrl: getStaticUrl(post.thumbnailPath),
+                        fit: BoxFit.cover,
+                      ),
+                      Icon(Icons.play_circle_filled, size: 50, color: Colors.white),
+                    ],
+                  ),
                 ),
-                Text('$_likesCount'),
-                IconButton(
-                  icon: Icon(Icons.comment),
-                  onPressed: _openPost,
-                ),
-                Text('${_post.commentsCount}'),
-                IconButton(
-                  icon: Icon(_isBookmarked ? Icons.bookmark : Icons.bookmark_border),
-                  onPressed: _toggleBookmark,
-                ),
-                Spacer(),
-                IconButton(
-                  icon: Icon(Icons.download),
-                  onPressed: _downloadMedia,
-                ),
-              ],
+              ),
+            Padding(
+              padding: EdgeInsets.all(8),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: Icon(post.likedByUser ? Icons.favorite : Icons.favorite_border, color: post.likedByUser ? Colors.red : null),
+                    onPressed: () => Provider.of<PostProvider>(context, listen: false).toggleLike(post.id, userId),
+                  ),
+                  Text('${post.likesCount}'),
+                  SizedBox(width: 16),
+                  IconButton(
+                    icon: Icon(Icons.comment),
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PostDetailPage(postId: post.id))),
+                  ),
+                  Text('${post.commentsCount}'),
+                  Spacer(),
+                  IconButton(
+                    icon: Icon(post.bookmarkedByUser ? Icons.bookmark : Icons.bookmark_border),
+                    onPressed: () => Provider.of<PostProvider>(context, listen: false).toggleBookmark(post.id, userId),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.share),
+                    onPressed: () => _sharePost(context),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
     );
   }
-}
 
-// ----------------------------------------------------------------------------
-// Create Post Screen with Media Editing
-// ----------------------------------------------------------------------------
-class CreatePostScreen extends StatefulWidget {
-  @override
-  _CreatePostScreenState createState() => _CreatePostScreenState();
-}
-
-class _CreatePostScreenState extends State<CreatePostScreen> {
-  final TextEditingController _captionController = TextEditingController();
-  File? _mediaFile;
-  String? _mediaType; // 'image', 'video'
-  bool _isUploading = false;
-  double _uploadProgress = 0.0;
-
-  final ImagePicker _picker = ImagePicker();
-
-  Future<void> _pickMedia() async {
-    showModalBottomSheet(
-      context: context,
-      builder: (_) => Wrap(
-        children: [
-          ListTile(
-            leading: Icon(Icons.image),
-            title: Text('Image'),
-            onTap: () async {
-              Navigator.pop(context);
-              final picked = await _picker.pickImage(source: ImageSource.gallery);
-              if (picked != null) {
-                _editImage(File(picked.path));
-              }
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.video_library),
-            title: Text('Video'),
-            onTap: () async {
-              Navigator.pop(context);
-              final picked = await _picker.pickVideo(source: ImageSource.gallery);
-              if (picked != null) {
-                _editVideo(File(picked.path));
-              }
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.insert_drive_file),
-            title: Text('File (document, audio)'),
-            onTap: () async {
-              Navigator.pop(context);
-              final result = await FilePicker.platform.pickFiles();
-              if (result != null) {
-                setState(() {
-                  _mediaFile = File(result.files.single.path!);
-                  _mediaType = 'file'; // or audio based on extension
-                });
-              }
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _editImage(File imageFile) async {
-  final cropped = await ImageCropper().cropImage(
-    sourcePath: imageFile.path,
-    uiSettings: [
-      AndroidUiSettings(
-        toolbarTitle: 'Crop Image',
-        toolbarColor: Colors.blue,
-        toolbarWidgetColor: Colors.white,
-        initAspectRatio: CropAspectRatioPreset.original,
-        lockAspectRatio: false,
-      ),
-      IOSUiSettings(
-        title: 'Crop Image',
-      ),
-    ],
-  );
-  if (cropped != null) {
-    setState(() {
-      _mediaFile = File(cropped.path);
-      _mediaType = 'image';
-    });
+  void _sharePost(BuildContext context) {
+    // share post link or content
   }
 }
 
-  Future<void> _editVideo(File videoFile) async {
-    // For simplicity, we skip video trimming to avoid ffmpeg dependency issues.
-    setState(() {
-      _mediaFile = videoFile;
-      _mediaType = 'video';
-    });
-  }
-
-  Future<void> _upload() async {
-    if (_captionController.text.isEmpty && _mediaFile == null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Add something')));
-      return;
-    }
-    final userId = context.read<UserProvider>().userId;
-    if (userId == null) return;
-
-    setState(() {
-      _isUploading = true;
-      _uploadProgress = 0.0;
-    });
-
-    try {
-      // Use Dio for progress
-      final dio = Dio();
-      final formData = FormData.fromMap({
-        'user_id': userId,
-        'caption': _captionController.text,
-        if (_mediaFile != null)
-          'media': await MultipartFile.fromFile(_mediaFile!.path, filename: _mediaFile!.path.split('/').last),
-      });
-      await dio.post(
-        '$baseUrl/upload',
-        data: formData,
-        onSendProgress: (sent, total) {
-          setState(() {
-            _uploadProgress = sent / total;
-          });
-        },
-      );
-      Navigator.pop(context, true);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      setState(() => _isUploading = false);
-    }
-  }
+// -----------------------------------------------------------------------------
+// PhotoView Gallery Page (برای نمایش تصاویر بزرگ)
+// -----------------------------------------------------------------------------
+class PhotoViewGalleryPage extends StatelessWidget {
+  final String imageUrl;
+  const PhotoViewGalleryPage({Key? key, required this.imageUrl}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Create Post'),
-        actions: [
-          if (!_isUploading)
-            TextButton(
-              onPressed: _upload,
-              child: Text('Post'),
-            ),
-        ],
-      ),
-      body: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-              controller: _captionController,
-              decoration: InputDecoration(labelText: 'Caption'),
-              maxLines: 3,
-            ),
-            SizedBox(height: 16),
-            if (_mediaFile != null)
-              Stack(
-                alignment: Alignment.center,
-                children: [
-                  if (_mediaType == 'image')
-                    Image.file(_mediaFile!, height: 200, fit: BoxFit.cover),
-                  if (_mediaType == 'video')
-                    Container(height: 200, child: Center(child: Text('Video selected'))),
-                  Positioned(
-                    top: 0,
-                    right: 0,
-                    child: IconButton(
-                      icon: Icon(Icons.close),
-                      onPressed: () => setState(() {
-                        _mediaFile = null;
-                        _mediaType = null;
-                      }),
-                    ),
-                  ),
-                ],
-              ),
-            if (_mediaFile == null)
-              ElevatedButton.icon(
-                onPressed: _pickMedia,
-                icon: Icon(Icons.attach_file),
-                label: Text('Add media'),
-              ),
-            if (_isUploading)
-              LinearProgressIndicator(value: _uploadProgress),
-          ],
+      appBar: AppBar(),
+      body: Center(
+        child: PhotoView(
+          imageProvider: CachedNetworkImageProvider(imageUrl),
         ),
       ),
     );
   }
 }
 
-// ----------------------------------------------------------------------------
-// Post Detail Screen
-// ----------------------------------------------------------------------------
-class PostDetailScreen extends StatefulWidget {
-  final int postId;
-
-  const PostDetailScreen({Key? key, required this.postId}) : super(key: key);
+// -----------------------------------------------------------------------------
+// Video Player Page (برای پخش ویدیو)
+// -----------------------------------------------------------------------------
+class VideoPlayerPage extends StatefulWidget {
+  final String videoUrl;
+  const VideoPlayerPage({Key? key, required this.videoUrl}) : super(key: key);
 
   @override
-  _PostDetailScreenState createState() => _PostDetailScreenState();
+  _VideoPlayerPageState createState() => _VideoPlayerPageState();
 }
 
-class _PostDetailScreenState extends State<PostDetailScreen> {
-  late Future<Post> _postFuture;
-  final TextEditingController _commentController = TextEditingController();
-  int? _replyingTo; // comment id for reply
+class _VideoPlayerPageState extends State<VideoPlayerPage> {
+  late VideoPlayerController _controller;
+  late ChewieController _chewieController;
 
   @override
   void initState() {
     super.initState();
-    _refresh();
+    _controller = VideoPlayerController.network(widget.videoUrl);
+    _chewieController = ChewieController(
+      videoPlayerController: _controller,
+      aspectRatio: 16 / 9,
+      autoPlay: true,
+      looping: false,
+    );
   }
 
-  void _refresh() {
-    final userId = context.read<UserProvider>().userId;
-    setState(() {
-      _postFuture = ApiService().getPost(widget.postId, userId: userId);
-    });
-  }
-
-  Future<void> _addComment() async {
-    if (_commentController.text.trim().isEmpty) return;
-    final userId = context.read<UserProvider>().userId;
-    if (userId == null) return;
-    try {
-      await ApiService().addComment(
-        widget.postId,
-        userId,
-        _commentController.text,
-        parentId: _replyingTo,
-      );
-      _commentController.clear();
-      setState(() => _replyingTo = null);
-      _refresh();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    }
+  @override
+  void dispose() {
+    _controller.dispose();
+    _chewieController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(),
+      body: Center(
+        child: Chewie(controller: _chewieController),
+      ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Post Detail Page
+// -----------------------------------------------------------------------------
+class PostDetailPage extends StatefulWidget {
+  final int postId;
+  const PostDetailPage({Key? key, required this.postId}) : super(key: key);
+
+  @override
+  _PostDetailPageState createState() => _PostDetailPageState();
+}
+
+class _PostDetailPageState extends State<PostDetailPage> {
+  final _commentController = TextEditingController();
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final userId = Provider.of<AuthProvider>(context, listen: false).userId;
+      Provider.of<CommentProvider>(context, listen: false).loadComments(widget.postId, userId: userId);
+    });
+  }
+
+  void _addComment() async {
+    if (_commentController.text.trim().isEmpty) return;
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    setState(() => _isLoading = true);
+    await Provider.of<CommentProvider>(context, listen: false).addComment(
+      widget.postId,
+      auth.userId!,
+      _commentController.text.trim(),
+    );
+    _commentController.clear();
+    setState(() => _isLoading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final commentProvider = Provider.of<CommentProvider>(context);
+    final post = commentProvider.post;
+    final auth = Provider.of<AuthProvider>(context);
+    return Scaffold(
       appBar: AppBar(title: Text('Post')),
-      body: FutureBuilder<Post>(
-        future: _postFuture,
+      body: post == null
+          ? Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                Expanded(
+                  child: ListView(
+                    children: [
+                      PostCard(post: post, userId: auth.userId!),
+                      Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text('Comments', style: Theme.of(context).textTheme.titleMedium),
+                      ),
+                      ...commentProvider.comments.map((c) => CommentTile(comment: c, userId: auth.userId!)),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _commentController,
+                          decoration: InputDecoration(
+                            hintText: 'Write a comment...',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: _isLoading ? Container(width: 24, height: 24, child: CircularProgressIndicator()) : Icon(Icons.send),
+                        onPressed: _addComment,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Comment Tile
+// -----------------------------------------------------------------------------
+class CommentTile extends StatelessWidget {
+  final Comment comment;
+  final int userId;
+
+  const CommentTile({Key? key, required this.comment, required this.userId}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onTap: () {
+              if (comment.userId != userId) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => OtherUserProfilePage(userId: comment.userId),
+                  ),
+                );
+              } else {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => ProfilePage()));
+              }
+            },
+            child: CircleAvatar(
+              radius: 16,
+              backgroundImage: comment.userProfileImage != null
+                  ? CachedNetworkImageProvider(getStaticUrl(comment.userProfileImage))
+                  : null,
+              child: comment.userProfileImage == null ? Icon(Icons.person, size: 16) : null,
+            ),
+          ),
+          SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  onTap: () {
+                    if (comment.userId != userId) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => OtherUserProfilePage(userId: comment.userId),
+                        ),
+                      );
+                    } else {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => ProfilePage()));
+                    }
+                  },
+                  child: Row(
+                    children: [
+                      Text(comment.username, style: TextStyle(fontWeight: FontWeight.bold)),
+                      if (comment.userIsBlue) Icon(Icons.verified, color: Colors.blue, size: 14),
+                      SizedBox(width: 8),
+                      Text(DateFormat.Hm().format(comment.createdAt)),
+                    ],
+                  ),
+                ),
+                Text(comment.content),
+              ],
+            ),
+          ),
+          Column(
+            children: [
+              IconButton(
+                icon: Icon(comment.likedByUser ? Icons.favorite : Icons.favorite_border, size: 16),
+                onPressed: () => Provider.of<CommentProvider>(context, listen: false).toggleLike(comment.id, userId),
+              ),
+              Text('${comment.likesCount}', style: TextStyle(fontSize: 12)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Other User Profile Page
+// -----------------------------------------------------------------------------
+class OtherUserProfilePage extends StatefulWidget {
+  final int userId;
+  const OtherUserProfilePage({Key? key, required this.userId}) : super(key: key);
+
+  @override
+  _OtherUserProfilePageState createState() => _OtherUserProfilePageState();
+}
+
+class _OtherUserProfilePageState extends State<OtherUserProfilePage> {
+  late Future<User> _userFuture;
+  final ApiService _apiService = ApiService();
+
+  @override
+  void initState() {
+    super.initState();
+    _userFuture = _apiService.getProfile(widget.userId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = Provider.of<AuthProvider>(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Profile'),
+        actions: [
+          if (auth.userId != widget.userId)
+            IconButton(
+              icon: Icon(Icons.message),
+              onPressed: () {
+                // شروع چت با این کاربر
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DirectChatPage(otherUserId: widget.userId),
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
+      body: FutureBuilder<User>(
+        future: _userFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
+            return Center(child: Text('Error loading profile'));
           }
-          final post = snapshot.data!;
-          return Column(
-            children: [
-              Expanded(
-                child: ListView(
-                  children: [
-                    PostCard(post: post),
-                    Padding(
-                      padding: EdgeInsets.all(8),
-                      child: Text('Comments', style: Theme.of(context).textTheme.titleLarge),
-                    ),
-                    if (post.comments != null)
-                      ...post.comments!.map((c) => CommentTile(
-                        comment: c,
-                        onReply: (cid) {
-                          setState(() => _replyingTo = cid);
-                        },
-                        onRefresh: _refresh,
-                      )),
-                  ],
-                ),
-              ),
-              if (_replyingTo != null)
-                Container(
-                  color: Colors.grey[200],
-                  padding: EdgeInsets.all(8),
-                  child: Row(
-                    children: [
-                      Text('Replying...'),
-                      IconButton(
-                        icon: Icon(Icons.close),
-                        onPressed: () => setState(() => _replyingTo = null),
-                      ),
-                    ],
-                  ),
-                ),
-              Padding(
-                padding: EdgeInsets.all(8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _commentController,
-                        decoration: InputDecoration(
-                          hintText: 'Add a comment...',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.send),
-                      onPressed: _addComment,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-// ----------------------------------------------------------------------------
-// Comment Tile
-// ----------------------------------------------------------------------------
-class CommentTile extends StatefulWidget {
-  final Comment comment;
-  final Function(int) onReply;
-  final VoidCallback onRefresh;
-
-  const CommentTile({Key? key, required this.comment, required this.onReply, required this.onRefresh});
-
-  @override
-  _CommentTileState createState() => _CommentTileState();
-}
-
-class _CommentTileState extends State<CommentTile> {
-  late Comment _comment;
-  bool _isLiked = false;
-  int _likesCount = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _comment = widget.comment;
-    _isLiked = _comment.likedByUser;
-    _likesCount = _comment.likesCount;
-  }
-
-  Future<void> _toggleLike() async {
-    final userId = context.read<UserProvider>().userId;
-    if (userId == null) return;
-    setState(() {
-      _isLiked = !_isLiked;
-      _likesCount += _isLiked ? 1 : -1;
-    });
-    try {
-      await ApiService().toggleCommentLike(_comment.id, userId);
-    } catch (e) {
-      setState(() {
-        _isLiked = !_isLiked;
-        _likesCount += _isLiked ? 1 : -1;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: EdgeInsets.only(left: _comment.parentId != null ? 32.0 : 8.0, top: 4, bottom: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ListTile(
-            leading: CircleAvatar(
-              backgroundImage: _comment.userProfileImage != null
-                  ? CachedNetworkImageProvider('$baseUrl/${_comment.userProfileImage}')
-                  : null,
-              child: _comment.userProfileImage == null ? Icon(Icons.person) : null,
-            ),
-            title: Row(
-              children: [
-                Text(_comment.username),
-                if (_comment.userIsBlue) Icon(Icons.verified, color: Colors.blue, size: 16),
-              ],
-            ),
-            subtitle: Text(_comment.content),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: Icon(_isLiked ? Icons.favorite : Icons.favorite_border, size: 16),
-                  onPressed: _toggleLike,
-                ),
-                Text('$_likesCount'),
-                IconButton(
-                  icon: Icon(Icons.reply, size: 16),
-                  onPressed: () => widget.onReply(_comment.id),
-                ),
-              ],
-            ),
-          ),
-          if (_comment.replies != null)
-            ..._comment.replies!.map((reply) => CommentTile(
-              comment: reply,
-              onReply: widget.onReply,
-              onRefresh: widget.onRefresh,
-            )),
-        ],
-      ),
-    );
-  }
-}
-
-// ----------------------------------------------------------------------------
-// Bookmarks Screen
-// ----------------------------------------------------------------------------
-class BookmarksScreen extends StatefulWidget {
-  @override
-  _BookmarksScreenState createState() => _BookmarksScreenState();
-}
-
-class _BookmarksScreenState extends State<BookmarksScreen> {
-  List<Post> _bookmarks = [];
-  bool _isLoading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchBookmarks();
-  }
-
-  Future<void> _fetchBookmarks() async {
-    final userId = context.read<UserProvider>().userId;
-    if (userId == null) return;
-    setState(() => _isLoading = true);
-    try {
-      final posts = await ApiService().getBookmarks(userId);
-      setState(() => _bookmarks = posts);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Bookmarks')),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : ListView.builder(
-              itemCount: _bookmarks.length,
-              itemBuilder: (_, i) => PostCard(post: _bookmarks[i]),
-            ),
-    );
-  }
-}
-
-// ----------------------------------------------------------------------------
-// Direct Messages List Screen (shows conversations)
-// ----------------------------------------------------------------------------
-// For simplicity, we'll just show a list of users you've chatted with.
-// But API doesn't provide that; we'd need to fetch messages and group.
-// We'll implement a basic version: a list of other users, and on tap go to chat.
-class DirectMessagesListScreen extends StatefulWidget {
-  @override
-  _DirectMessagesListScreenState createState() => _DirectMessagesListScreenState();
-}
-
-class _DirectMessagesListScreenState extends State<DirectMessagesListScreen> {
-  List<User> _users = []; // dummy, we need to fetch users from somewhere. For now, just a placeholder.
-  // In a real app, you'd have a separate endpoint to get conversations.
-  // We'll just show a list of all users (maybe from search) but that's not implemented.
-  // Instead, we'll provide a button to start a new conversation by entering user id.
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Direct Messages')),
-      body: Center(
-        child: Text('To start a chat, go to Profile and select a user.\nOr implement user search.'),
-      ),
-      floatingActionButton: FloatingActionButton(
-        child: Icon(Icons.add),
-        onPressed: () {
-          // show dialog to enter other user id
-          _startNewChat();
-        },
-      ),
-    );
-  }
-
-  void _startNewChat() {
-    final TextEditingController controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Enter user ID'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              final otherId = int.tryParse(controller.text);
-              if (otherId != null) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => DirectChatScreen(otherUserId: otherId),
-                  ),
-                );
-              }
-              Navigator.pop(context);
-            },
-            child: Text('Start'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ----------------------------------------------------------------------------
-// Direct Chat Screen
-// ----------------------------------------------------------------------------
-class DirectChatScreen extends StatefulWidget {
-  final int otherUserId;
-
-  const DirectChatScreen({Key? key, required this.otherUserId}) : super(key: key);
-
-  @override
-  _DirectChatScreenState createState() => _DirectChatScreenState();
-}
-
-class _DirectChatScreenState extends State<DirectChatScreen> {
-  List<DirectMessage> _messages = [];
-  int _page = 1;
-  bool _hasMore = true;
-  bool _isLoading = false;
-  final ScrollController _scrollController = ScrollController();
-  final TextEditingController _messageController = TextEditingController();
-  File? _mediaFile;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchMessages();
-  }
-
-  Future<void> _fetchMessages() async {
-    final userId = context.read<UserProvider>().userId;
-    if (userId == null) return;
-    if (_isLoading || !_hasMore) return;
-    setState(() => _isLoading = true);
-    try {
-      final msgs = await ApiService().getDirectMessages(userId, widget.otherUserId, page: _page);
-      if (msgs.isEmpty) _hasMore = false;
-      setState(() {
-        _messages.insertAll(0, msgs.reversed.toList()); // because newest last? We want oldest first? Actually we'll sort.
-        _page++;
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _sendMessage() async {
-    final userId = context.read<UserProvider>().userId;
-    if (userId == null) return;
-    if (_messageController.text.isEmpty && _mediaFile == null) return;
-    try {
-      await ApiService().sendDirectMessage(
-        senderId: userId,
-        receiverId: widget.otherUserId,
-        content: _messageController.text,
-        media: _mediaFile,
-      );
-      _messageController.clear();
-      setState(() => _mediaFile = null);
-      // refresh messages
-      setState(() {
-        _messages.clear();
-        _page = 1;
-        _hasMore = true;
-      });
-      _fetchMessages();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    }
-  }
-
-  Future<void> _pickMedia() async {
-    final result = await FilePicker.platform.pickFiles();
-    if (result != null) {
-      setState(() {
-        _mediaFile = File(result.files.single.path!);
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Chat with ${widget.otherUserId}')),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              itemCount: _messages.length + (_isLoading ? 1 : 0),
-              reverse: true, // to show latest at bottom
-              itemBuilder: (_, index) {
-                if (index == 0 && _isLoading) return Center(child: CircularProgressIndicator());
-                final msg = _messages[_messages.length - 1 - index]; // reverse index
-                final isMe = msg.senderId == context.read<UserProvider>().userId;
-                return MessageBubble(message: msg, isMe: isMe);
-              },
-            ),
-          ),
-          if (_mediaFile != null)
-            Container(
-              color: Colors.grey[200],
-              padding: EdgeInsets.all(8),
-              child: Row(
-                children: [
-                  Expanded(child: Text('Media: ${_mediaFile!.path.split('/').last}')),
-                  IconButton(
-                    icon: Icon(Icons.close),
-                    onPressed: () => setState(() => _mediaFile = null),
-                  ),
-                ],
-              ),
-            ),
-          Padding(
-            padding: EdgeInsets.all(8),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: Icon(Icons.attach_file),
-                  onPressed: _pickMedia,
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    decoration: InputDecoration(
-                      hintText: 'Type a message...',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                IconButton(
-                  icon: Icon(Icons.send),
-                  onPressed: _sendMessage,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ----------------------------------------------------------------------------
-// Message Bubble (for direct and group)
-// ----------------------------------------------------------------------------
-class MessageBubble extends StatelessWidget {
-  final dynamic message; // can be DirectMessage or GroupMessage
-  final bool isMe;
-
-  const MessageBubble({Key? key, required this.message, required this.isMe}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    final alignment = isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
-    return Container(
-      margin: EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-      child: Column(
-        crossAxisAlignment: alignment,
-        children: [
-          if (!isMe && message is GroupMessage)
-            Text((message as GroupMessage).username),
-          Container(
-            padding: EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: isMe ? Colors.blue : Colors.grey[300],
-              borderRadius: BorderRadius.circular(8),
-            ),
+          final user = snapshot.data!;
+          return SingleChildScrollView(
+            padding: EdgeInsets.all(16),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (message.content != null && message.content!.isNotEmpty)
-                  Text(message.content!),
-                if (message.mediaType != null)
-                  GestureDetector(
-                    onTap: () {
-                      // open media
-                      final url = '$baseUrl/${message.mediaPath}';
-                      // TODO: show full screen
-                    },
-                    child: Container(
-                      width: 150,
-                      height: 100,
-                      color: Colors.black12,
-                      child: Center(child: Text(message.mediaType!)),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Text(DateFormat.Hm().format(message.createdAt)),
-        ],
-      ),
-    );
-  }
-}
-
-// ----------------------------------------------------------------------------
-// Group Chat Screen
-// ----------------------------------------------------------------------------
-class GroupChatScreen extends StatefulWidget {
-  @override
-  _GroupChatScreenState createState() => _GroupChatScreenState();
-}
-
-class _GroupChatScreenState extends State<GroupChatScreen> {
-  List<GroupMessage> _messages = [];
-  int _page = 1;
-  bool _hasMore = true;
-  bool _isLoading = false;
-  final ScrollController _scrollController = ScrollController();
-  final TextEditingController _messageController = TextEditingController();
-  File? _mediaFile;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchMessages();
-  }
-
-  Future<void> _fetchMessages() async {
-    if (_isLoading || !_hasMore) return;
-    setState(() => _isLoading = true);
-    try {
-      final msgs = await ApiService().getGroupMessages(page: _page);
-      if (msgs.isEmpty) _hasMore = false;
-      setState(() {
-        _messages.insertAll(0, msgs.reversed.toList());
-        _page++;
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _sendMessage() async {
-    final userId = context.read<UserProvider>().userId;
-    if (userId == null) return;
-    if (_messageController.text.isEmpty && _mediaFile == null) return;
-    try {
-      await ApiService().sendGroupMessage(
-        senderId: userId,
-        content: _messageController.text,
-        media: _mediaFile,
-      );
-      _messageController.clear();
-      setState(() => _mediaFile = null);
-      setState(() {
-        _messages.clear();
-        _page = 1;
-        _hasMore = true;
-      });
-      _fetchMessages();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    }
-  }
-
-  Future<void> _pickMedia() async {
-    final result = await FilePicker.platform.pickFiles();
-    if (result != null) {
-      setState(() {
-        _mediaFile = File(result.files.single.path!);
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Group Chat')),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              itemCount: _messages.length + (_isLoading ? 1 : 0),
-              reverse: true,
-              itemBuilder: (_, index) {
-                if (index == 0 && _isLoading) return Center(child: CircularProgressIndicator());
-                final msg = _messages[_messages.length - 1 - index];
-                final isMe = msg.senderId == context.read<UserProvider>().userId;
-                return MessageBubble(message: msg, isMe: isMe);
-              },
-            ),
-          ),
-          if (_mediaFile != null)
-            Container(
-              color: Colors.grey[200],
-              padding: EdgeInsets.all(8),
-              child: Row(
-                children: [
-                  Expanded(child: Text('Media: ${_mediaFile!.path.split('/').last}')),
-                  IconButton(
-                    icon: Icon(Icons.close),
-                    onPressed: () => setState(() => _mediaFile = null),
-                  ),
-                ],
-              ),
-            ),
-          Padding(
-            padding: EdgeInsets.all(8),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: Icon(Icons.attach_file),
-                  onPressed: _pickMedia,
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    decoration: InputDecoration(
-                      hintText: 'Type a message...',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                IconButton(
-                  icon: Icon(Icons.send),
-                  onPressed: _sendMessage,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ----------------------------------------------------------------------------
-// Profile Screen
-// ----------------------------------------------------------------------------
-class ProfileScreen extends StatefulWidget {
-  @override
-  _ProfileScreenState createState() => _ProfileScreenState();
-}
-
-class _ProfileScreenState extends State<ProfileScreen> {
-  bool _isEditing = false;
-  final TextEditingController _bioController = TextEditingController();
-  File? _newProfileImage;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadUser();
-  }
-
-  void _loadUser() {
-    final user = context.read<UserProvider>().currentUser;
-    if (user != null) {
-      _bioController.text = user.bio ?? '';
-    }
-  }
-
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
-    if (picked != null) {
-      setState(() => _newProfileImage = File(picked.path));
-    }
-  }
-
-  Future<void> _saveProfile() async {
-    final userId = context.read<UserProvider>().userId;
-    if (userId == null) return;
-    try {
-      await ApiService().updateProfile(
-        userId,
-        _bioController.text,
-        _newProfileImage,
-      );
-      await context.read<UserProvider>().refreshProfile();
-      setState(() {
-        _isEditing = false;
-        _newProfileImage = null;
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final user = context.watch<UserProvider>().currentUser;
-    if (user == null) {
-      return Center(child: CircularProgressIndicator());
-    }
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Profile'),
-        actions: [
-          if (!_isEditing)
-            IconButton(
-              icon: Icon(Icons.edit),
-              onPressed: () => setState(() => _isEditing = true),
-            ),
-          IconButton(
-            icon: Icon(Icons.logout),
-            onPressed: () async {
-              await context.read<UserProvider>().logout();
-            },
-          ),
-        ],
-      ),
-      body: ListView(
-        padding: EdgeInsets.all(16),
-        children: [
-          Center(
-            child: Stack(
               children: [
                 CircleAvatar(
                   radius: 50,
-                  backgroundImage: _newProfileImage != null
-                      ? FileImage(_newProfileImage!) as ImageProvider
-                      : (user.profileImage != null
-                          ? CachedNetworkImageProvider('$baseUrl/${user.profileImage}')
-                          : null),
-                  child: user.profileImage == null && _newProfileImage == null
-                      ? Icon(Icons.person, size: 50)
+                  backgroundImage: user.profileImage != null
+                      ? CachedNetworkImageProvider(getStaticUrl(user.profileImage))
                       : null,
+                  child: user.profileImage == null ? Icon(Icons.person, size: 50) : null,
                 ),
-                if (_isEditing)
-                  Positioned(
-                    bottom: 0,
-                    right: 0,
-                    child: CircleAvatar(
-                      backgroundColor: Colors.blue,
-                      child: IconButton(
-                        icon: Icon(Icons.camera_alt, color: Colors.white),
-                        onPressed: _pickImage,
-                      ),
-                    ),
-                  ),
+                SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(user.username, style: Theme.of(context).textTheme.titleLarge),
+                    if (user.isBlue) Icon(Icons.verified, color: Colors.blue),
+                  ],
+                ),
+                if (user.bio != null) Text(user.bio!),
+                SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildStat('Posts', user.postsCount),
+                    _buildStat('Bookmarks', user.bookmarksCount),
+                  ],
+                ),
               ],
             ),
-          ),
-          SizedBox(height: 16),
-          if (!_isEditing) ...[
-            Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(user.username, style: Theme.of(context).textTheme.titleLarge),
-                  if (user.isBlue) Icon(Icons.verified, color: Colors.blue),
-                ],
-              ),
-            ),
-            SizedBox(height: 8),
-            Center(child: Text(user.bio ?? 'No bio')),
-            SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildStat('Posts', user.postsCount),
-                _buildStat('Bookmarks', user.bookmarksCount),
-              ],
-            ),
-          ] else ...[
-            TextFormField(
-              controller: _bioController,
-              decoration: InputDecoration(labelText: 'Bio'),
-              maxLines: 3,
-            ),
-            SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _saveProfile,
-              child: Text('Save'),
-            ),
-          ],
-          Divider(),
-          ListTile(
-            leading: Icon(Icons.settings),
-            title: Text('Settings'),
-            onTap: () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsScreen()));
-            },
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -2241,34 +1564,697 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildStat(String label, int count) {
     return Column(
       children: [
-        Text(count.toString(), style: Theme.of(context).textTheme.titleLarge),
+        Text(count.toString(), style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         Text(label),
       ],
     );
   }
 }
 
-// ----------------------------------------------------------------------------
-// Settings Screen
-// ----------------------------------------------------------------------------
-class SettingsScreen extends StatelessWidget {
+// -----------------------------------------------------------------------------
+// Explore Page (placeholder)
+// -----------------------------------------------------------------------------
+class ExplorePage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Center(child: Text('Explore Page (coming soon)'));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Profile Page (خود کاربر)
+// -----------------------------------------------------------------------------
+class ProfilePage extends StatefulWidget {
+  @override
+  _ProfilePageState createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  @override
+  Widget build(BuildContext context) {
+    final auth = Provider.of<AuthProvider>(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Profile'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.settings),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsPage())),
+          ),
+        ],
+      ),
+      body: auth.currentUser == null
+          ? Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  CircleAvatar(
+                    radius: 50,
+                    backgroundImage: auth.currentUser!.profileImage != null
+                        ? CachedNetworkImageProvider(getStaticUrl(auth.currentUser!.profileImage))
+                        : null,
+                    child: auth.currentUser!.profileImage == null ? Icon(Icons.person, size: 50) : null,
+                  ),
+                  SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(auth.currentUser!.username, style: Theme.of(context).textTheme.titleLarge),
+                      if (auth.currentUser!.isBlue) Icon(Icons.verified, color: Colors.blue),
+                    ],
+                  ),
+                  if (auth.currentUser!.bio != null) Text(auth.currentUser!.bio!),
+                  SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildStat('Posts', auth.currentUser!.postsCount),
+                      _buildStat('Bookmarks', auth.currentUser!.bookmarksCount),
+                    ],
+                  ),
+                  SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => _editProfile(context),
+                    child: Text('Edit Profile'),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _buildStat(String label, int count) {
+    return Column(
+      children: [
+        Text(count.toString(), style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        Text(label),
+      ],
+    );
+  }
+
+  void _editProfile(BuildContext context) {
+    // show dialog to edit bio and profile image
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Settings Page
+// -----------------------------------------------------------------------------
+class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
+    final authProvider = Provider.of<AuthProvider>(context);
     return Scaffold(
       appBar: AppBar(title: Text('Settings')),
       body: ListView(
         children: [
           SwitchListTile(
             title: Text('Dark Mode'),
-            value: themeProvider.isDark,
-            onChanged: (val) {
-              themeProvider.toggleTheme();
-              themeProvider.saveTheme();
+            value: themeProvider.isDarkMode,
+            onChanged: (_) => themeProvider.toggleTheme(),
+          ),
+          ListTile(
+            title: Text('Logout'),
+            leading: Icon(Icons.logout),
+            onTap: () {
+              authProvider.logout();
+              Navigator.pushReplacementNamed(context, '/login');
             },
           ),
-          // Add more settings as needed
         ],
+      ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Chats Page (Direct & Group)
+// -----------------------------------------------------------------------------
+class ChatsPage extends StatefulWidget {
+  @override
+  _ChatsPageState createState() => _ChatsPageState();
+}
+
+class _ChatsPageState extends State<ChatsPage> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Chats'),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: [
+            Tab(text: 'Direct'),
+            Tab(text: 'Group'),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          DirectChatsList(),
+          GroupChatPage(),
+        ],
+      ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Direct Chats List (نمایش لیست مکالمات)
+// -----------------------------------------------------------------------------
+class DirectChatsList extends StatefulWidget {
+  @override
+  _DirectChatsListState createState() => _DirectChatsListState();
+}
+
+class _DirectChatsListState extends State<DirectChatsList> {
+  // لیست کاربرانی که با آنها چت داشته‌ایم (برای سادگی، از API نداریم، می‌توانیم از لیست کاربران پیش‌فرض استفاده کنیم)
+  final List<Map<String, dynamic>> _recentChats = [
+    // این داده‌ها باید از API دریافت شوند. فعلاً یک نمونه می‌سازیم.
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRecentChats();
+  }
+
+  Future<void> _loadRecentChats() async {
+    // اینجا باید لیست آخرین کاربرانی که با آنها پیام داشته‌ایم را از یک endpoint دریافت کنیم.
+    // در حال حاضر سرور چنین API ای ندارد. پس یک صفحه خالی با دکمه شروع چت جدید می‌سازیم.
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = Provider.of<AuthProvider>(context);
+    return Scaffold(
+      body: _recentChats.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('No chats yet'),
+                  SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () {
+                      _showNewChatDialog(context);
+                    },
+                    child: Text('Start New Chat'),
+                  ),
+                ],
+              ),
+            )
+          : ListView.builder(
+              itemCount: _recentChats.length,
+              itemBuilder: (ctx, index) {
+                final chat = _recentChats[index];
+                return ListTile(
+                  leading: CircleAvatar(
+                    backgroundImage: chat['profileImage'] != null
+                        ? CachedNetworkImageProvider(getStaticUrl(chat['profileImage']))
+                        : null,
+                    child: chat['profileImage'] == null ? Icon(Icons.person) : null,
+                  ),
+                  title: Text(chat['username']),
+                  subtitle: Text(chat['lastMessage'] ?? ''),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => DirectChatPage(otherUserId: chat['userId']),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showNewChatDialog(context),
+        child: Icon(Icons.add),
+      ),
+    );
+  }
+
+  void _showNewChatDialog(BuildContext context) {
+    final TextEditingController usernameController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Start New Chat'),
+        content: TextField(
+          controller: usernameController,
+          decoration: InputDecoration(labelText: 'Enter username'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final username = usernameController.text.trim();
+              if (username.isEmpty) return;
+              // اینجا باید userId را از روی username پیدا کنیم. سرور API ای برای این کار ندارد.
+              // برای تست، فرض می‌کنیم username با userId برابر است (غیرواقعی)
+              // بهتر است یک صفحه جستجو با یک endpoint فرضی ایجاد کنیم.
+              // فعلاً از کاربر می‌خواهیم userId را وارد کند.
+              Navigator.pop(ctx);
+              _showUserIdDialog(context);
+            },
+            child: Text('Next'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showUserIdDialog(BuildContext context) {
+    final TextEditingController userIdController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Enter User ID'),
+        content: TextField(
+          controller: userIdController,
+          decoration: InputDecoration(labelText: 'User ID'),
+          keyboardType: TextInputType.number,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final userId = int.tryParse(userIdController.text);
+              if (userId != null) {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DirectChatPage(otherUserId: userId),
+                  ),
+                );
+              }
+            },
+            child: Text('Start Chat'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Direct Chat Page
+// -----------------------------------------------------------------------------
+class DirectChatPage extends StatefulWidget {
+  final int otherUserId;
+  const DirectChatPage({Key? key, required this.otherUserId}) : super(key: key);
+
+  @override
+  _DirectChatPageState createState() => _DirectChatPageState();
+}
+
+class _DirectChatPageState extends State<DirectChatPage> {
+  final TextEditingController _messageController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  late int _otherUserId;
+
+  @override
+  void initState() {
+    super.initState();
+    _otherUserId = widget.otherUserId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      Provider.of<ChatProvider>(context, listen: false).loadDirectMessages(auth.userId!, _otherUserId, refresh: true);
+    });
+  }
+
+  void _sendMessage() async {
+    if (_messageController.text.trim().isEmpty) return;
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final chat = Provider.of<ChatProvider>(context, listen: false);
+    await chat.sendDirectMessage(auth.userId!, _otherUserId, _messageController.text.trim(), null);
+    _messageController.clear();
+    _scrollController.animateTo(0, duration: Duration(milliseconds: 300), curve: Curves.easeOut);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chatProvider = Provider.of<ChatProvider>(context);
+    final auth = Provider.of<AuthProvider>(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Chat with User $_otherUserId'),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              reverse: true,
+              controller: _scrollController,
+              itemCount: chatProvider.messages.length,
+              itemBuilder: (ctx, index) {
+                final msg = chatProvider.messages[index];
+                final isMe = msg.senderId == auth.userId;
+                return Container(
+                  margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Row(
+                    mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                    children: [
+                      if (!isMe)
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundImage: msg.senderProfileImage != null
+                              ? CachedNetworkImageProvider(getStaticUrl(msg.senderProfileImage))
+                              : null,
+                          child: msg.senderProfileImage == null ? Icon(Icons.person, size: 16) : null,
+                        ),
+                      Flexible(
+                        child: Container(
+                          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
+                          padding: EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: isMe ? Colors.blue : Colors.grey.shade300,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (!isMe)
+                                Text(msg.senderUsername, style: TextStyle(fontWeight: FontWeight.bold)),
+                              if (msg.content != null) Text(msg.content!),
+                              if (msg.mediaType != null) Text('[${msg.mediaType}]'),
+                              Text(DateFormat.Hm().format(msg.createdAt), style: TextStyle(fontSize: 10)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.all(8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _messageController,
+                    decoration: InputDecoration(
+                      hintText: 'Type a message...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.send),
+                  onPressed: _sendMessage,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Group Chat Page (بهبود UI)
+// -----------------------------------------------------------------------------
+class GroupChatPage extends StatefulWidget {
+  @override
+  _GroupChatPageState createState() => _GroupChatPageState();
+}
+
+class _GroupChatPageState extends State<GroupChatPage> {
+  final TextEditingController _messageController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Provider.of<ChatProvider>(context, listen: false).loadGroupMessages(refresh: true);
+    });
+  }
+
+  void _sendMessage() async {
+    if (_messageController.text.trim().isEmpty) return;
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final chat = Provider.of<ChatProvider>(context, listen: false);
+    await chat.sendGroupMessage(auth.userId!, _messageController.text.trim(), null);
+    _messageController.clear();
+    _scrollController.animateTo(0, duration: Duration(milliseconds: 300), curve: Curves.easeOut);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chatProvider = Provider.of<ChatProvider>(context);
+    final auth = Provider.of<AuthProvider>(context);
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            reverse: true,
+            controller: _scrollController,
+            itemCount: chatProvider.groupMessages.length,
+            itemBuilder: (ctx, index) {
+              final msg = chatProvider.groupMessages[index];
+              final isMe = msg.senderId == auth.userId;
+              return Container(
+                margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                  children: [
+                    if (!isMe)
+                      CircleAvatar(
+                        radius: 16,
+                        backgroundImage: msg.userProfileImage != null
+                            ? CachedNetworkImageProvider(getStaticUrl(msg.userProfileImage))
+                            : null,
+                        child: msg.userProfileImage == null ? Icon(Icons.person, size: 16) : null,
+                      ),
+                    Flexible(
+                      child: Container(
+                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
+                        padding: EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: isMe ? Colors.blue : Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (!isMe)
+                              Row(
+                                children: [
+                                  Text(msg.username, style: TextStyle(fontWeight: FontWeight.bold)),
+                                  if (msg.userIsBlue) Icon(Icons.verified, color: Colors.blue, size: 14),
+                                ],
+                              ),
+                            if (msg.content != null) Text(msg.content!),
+                            if (msg.mediaType != null) Text('[${msg.mediaType}]'),
+                            Text(DateFormat.Hm().format(msg.createdAt), style: TextStyle(fontSize: 10)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        Padding(
+          padding: EdgeInsets.all(8),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _messageController,
+                  decoration: InputDecoration(
+                    hintText: 'Type a message...',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.send),
+                onPressed: _sendMessage,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Upload Post Page (بدون ویرایش برای جلوگیری از کرش)
+// -----------------------------------------------------------------------------
+class UploadPostPage extends StatefulWidget {
+  @override
+  _UploadPostPageState createState() => _UploadPostPageState();
+}
+
+class _UploadPostPageState extends State<UploadPostPage> {
+  final _captionController = TextEditingController();
+  File? _selectedMedia;
+  String? _mediaType;
+  double _uploadProgress = 0;
+  bool _uploading = false;
+
+  // برای نمایش ویدیو
+  VideoPlayerController? _videoController;
+  ChewieController? _chewieController;
+
+  @override
+  void dispose() {
+    _videoController?.dispose();
+    _chewieController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickMedia() async {
+    final picker = ImagePicker();
+    final pickedImage = await picker.pickImage(source: ImageSource.gallery);
+    if (pickedImage != null) {
+      File imageFile = File(pickedImage.path);
+      setState(() {
+        _selectedMedia = imageFile;
+        _mediaType = 'image';
+      });
+      return;
+    }
+
+    final pickedVideo = await picker.pickVideo(source: ImageSource.gallery);
+    if (pickedVideo != null) {
+      File videoFile = File(pickedVideo.path);
+      setState(() {
+        _selectedMedia = videoFile;
+        _mediaType = 'video';
+      });
+      _initializeVideoPlayer(videoFile);
+    }
+  }
+
+  void _initializeVideoPlayer(File videoFile) {
+    _videoController = VideoPlayerController.file(videoFile);
+    _chewieController = ChewieController(
+      videoPlayerController: _videoController!,
+      aspectRatio: 16 / 9,
+      autoPlay: false,
+      looping: false,
+    );
+    setState(() {});
+  }
+
+  Future<void> _saveToGallery(File file) async {
+    if (await Permission.storage.request().isGranted) {
+      if (_mediaType == 'image') {
+        await GallerySaver.saveImage(file.path);
+      } else if (_mediaType == 'video') {
+        await GallerySaver.saveVideo(file.path);
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved to gallery')),
+      );
+    }
+  }
+
+  Future<void> _upload() async {
+    if (_selectedMedia == null) return;
+    setState(() {
+      _uploading = true;
+      _uploadProgress = 0;
+    });
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final api = ApiService();
+    try {
+      await api.uploadPost(
+        auth.userId!,
+        _captionController.text,
+        _selectedMedia,
+        onProgress: (sent, total) {
+          setState(() {
+            _uploadProgress = sent / total;
+          });
+        },
+      );
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Post uploaded')));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed: $e')));
+    } finally {
+      setState(() => _uploading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Upload Post'),
+        actions: [
+          if (_selectedMedia != null)
+            IconButton(
+              icon: Icon(Icons.save),
+              onPressed: () => _saveToGallery(_selectedMedia!),
+            ),
+        ],
+      ),
+      body: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          children: [
+            if (_selectedMedia != null)
+              _mediaType == 'image'
+                  ? Image.file(_selectedMedia!, height: 200)
+                  : _chewieController != null
+                      ? Container(
+                          height: 200,
+                          child: Chewie(controller: _chewieController!),
+                        )
+                      : Container(height: 200, color: Colors.black),
+            ElevatedButton(
+              onPressed: _pickMedia,
+              child: Text('Select Media'),
+            ),
+            TextField(
+              controller: _captionController,
+              decoration: InputDecoration(labelText: 'Caption'),
+            ),
+            SizedBox(height: 20),
+            if (_uploading)
+              Column(
+                children: [
+                  LinearProgressIndicator(value: _uploadProgress),
+                  Text('${(_uploadProgress * 100).toStringAsFixed(0)}%'),
+                ],
+              ),
+            ElevatedButton(
+              onPressed: _uploading ? null : _upload,
+              child: Text('Post'),
+            ),
+          ],
+        ),
       ),
     );
   }
