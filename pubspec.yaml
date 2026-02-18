@@ -26,7 +26,7 @@ dependencies:
   chewie: ^1.8.5
 
   # Save to gallery
-  gallery_saver: ^2.3.2
+  #gallery_saver: ^2.3.2
 
   # Caching & display
   cached_network_image: ^3.4.1
