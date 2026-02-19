@@ -1,7 +1,9 @@
 // main.dart
+// main.dart
 import 'dart:async';
 import 'dart:collection';
 import 'dart:math';
+import 'dart:ui'; // <-- اضافه شد برای TextDirection
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -16,6 +18,7 @@ import 'package:path_provider/path_provider.dart' as path_provider;
 // -------------------- Models --------------------
 part 'main.g.dart'; // برای Hive
 
+// ... (بقیه کد دقیقاً مانند قبل، بدون تغییر) ...
 @HiveType(typeId: 0)
 class GoldTransaction extends HiveObject {
   @HiveField(0)
