@@ -2,7 +2,6 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:math';
-import 'dart:ui'; // برای TextDirection
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -1352,7 +1351,6 @@ void main() async {
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
           fontFamily: 'Vazir', // در صورت وجود فونت
         ),
-        textDirection: TextDirection.rtl, // <-- راست‌چین کل برنامه
         home: MainScreen(),
         debugShowCheckedModeBanner: false,
       ),
