@@ -1,2277 +1,1182 @@
 // main.dart
-import 'dart:convert';
-import 'dart:io';
+import 'dart:async';
+import 'dart:collection';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:intl/intl.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:video_player/video_player.dart';
-import 'package:audioplayers/audioplayers.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:intl/intl.dart';
-import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import 'package:photo_view/photo_view.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:hive/hive.dart';
+import 'package:path_provider/path_provider.dart' as path_provider;
 
 // -------------------- Models --------------------
-class User {
-  final int id;
-  final String username;
-  final String? bio;
-  final String? profileImage;
-  final bool isBlue;
-  final DateTime createdAt;
-  int postsCount;
-  int bookmarksCount;
+part 'main.g.dart'; // برای Hive
 
-  User({
+@HiveType(typeId: 0)
+class GoldTransaction extends HiveObject {
+  @HiveField(0)
+  String id;
+  @HiveField(1)
+  String type; // gold18, gold24, ons, dollar
+  @HiveField(2)
+  DateTime purchaseDate;
+  @HiveField(3)
+  double purchasePricePerUnit; // فی خرید
+  @HiveField(4)
+  double quantity; // وزن بر حسب گرم
+  @HiveField(5)
+  String description;
+  @HiveField(6)
+  bool isGold; // true for gold, false for coin
+
+  GoldTransaction({
     required this.id,
-    required this.username,
-    this.bio,
-    this.profileImage,
-    required this.isBlue,
-    required this.createdAt,
-    this.postsCount = 0,
-    this.bookmarksCount = 0,
+    required this.type,
+    required this.purchaseDate,
+    required this.purchasePricePerUnit,
+    required this.quantity,
+    required this.description,
+    required this.isGold,
   });
-
-  factory User.fromJson(Map<String, dynamic> json) {
-    return User(
-      id: json['id'],
-      username: json['username'],
-      bio: json['bio'],
-      profileImage: json['profile_image'],
-      isBlue: json['is_blue'] == 1,
-      createdAt: DateTime.parse(json['created_at']),
-      postsCount: json['posts_count'] ?? 0,
-      bookmarksCount: json['bookmarks_count'] ?? 0,
-    );
-  }
 }
 
-class Post {
-  final int id;
-  final int userId;
-  final String username;
-  final String? userProfileImage;
-  final bool userIsBlue;
-  String? caption; // changed from final to allow editing
-  final String mediaType;
-  final String? mediaPath;
-  final String? thumbnailPath;
-  final DateTime createdAt;
-  int likesCount;
-  int commentsCount;
-  bool likedByUser;
-  bool bookmarkedByUser;
-  List<Comment>? comments;
+@HiveType(typeId: 1)
+class CoinTransaction extends HiveObject {
+  @HiveField(0)
+  String id;
+  @HiveField(1)
+  String coinType; // sekke, bahar, sekkenim, sekkerob
+  @HiveField(2)
+  DateTime purchaseDate;
+  @HiveField(3)
+  double purchasePricePerUnit; // فی هر سکه
+  @HiveField(4)
+  int count; // تعداد
+  @HiveField(5)
+  String description;
 
-  Post({
+  CoinTransaction({
     required this.id,
-    required this.userId,
-    required this.username,
-    this.userProfileImage,
-    required this.userIsBlue,
-    this.caption,
-    required this.mediaType,
-    this.mediaPath,
-    this.thumbnailPath,
-    required this.createdAt,
-    this.likesCount = 0,
-    this.commentsCount = 0,
-    this.likedByUser = false,
-    this.bookmarkedByUser = false,
-    this.comments,
+    required this.coinType,
+    required this.purchaseDate,
+    required this.purchasePricePerUnit,
+    required this.count,
+    required this.description,
   });
-
-  factory Post.fromJson(Map<String, dynamic> json) {
-    return Post(
-      id: json['id'],
-      userId: json['user_id'],
-      username: json['username'],
-      userProfileImage: json['profile_image'],
-      userIsBlue: json['is_blue'] == 1,
-      caption: json['caption'],
-      mediaType: json['media_type'],
-      mediaPath: json['media_path'],
-      thumbnailPath: json['thumbnail_path'],
-      createdAt: DateTime.parse(json['created_at']),
-      likesCount: json['likes_count'] ?? 0,
-      commentsCount: json['comments_count'] ?? 0,
-      likedByUser: json['liked_by_user'] ?? false,
-      bookmarkedByUser: json['bookmarked_by_user'] ?? false,
-    );
-  }
-}
-
-class Comment {
-  final int id;
-  final int postId;
-  final int userId;
-  final String username;
-  final String? userProfileImage;
-  final bool userIsBlue;
-  final int? parentId;
-  final String content;
-  final DateTime createdAt;
-  int likesCount;
-  bool likedByUser;
-
-  Comment({
-    required this.id,
-    required this.postId,
-    required this.userId,
-    required this.username,
-    this.userProfileImage,
-    required this.userIsBlue,
-    this.parentId,
-    required this.content,
-    required this.createdAt,
-    this.likesCount = 0,
-    this.likedByUser = false,
-  });
-
-  factory Comment.fromJson(Map<String, dynamic> json) {
-    return Comment(
-      id: json['id'],
-      postId: json['post_id'],
-      userId: json['user_id'],
-      username: json['username'],
-      userProfileImage: json['profile_image'],
-      userIsBlue: json['is_blue'] == 1,
-      parentId: json['parent_id'],
-      content: json['content'],
-      createdAt: DateTime.parse(json['created_at']),
-      likesCount: json['likes_count'] ?? 0,
-      likedByUser: json['liked_by_user'] ?? false,
-    );
-  }
-}
-
-class DirectMessage {
-  final int id;
-  final int senderId;
-  final int receiverId;
-  final String? content;
-  final String? mediaType;
-  final String? mediaPath;
-  final DateTime createdAt;
-  final String senderUsername;
-  final String? senderProfileImage;
-
-  DirectMessage({
-    required this.id,
-    required this.senderId,
-    required this.receiverId,
-    this.content,
-    this.mediaType,
-    this.mediaPath,
-    required this.createdAt,
-    required this.senderUsername,
-    this.senderProfileImage,
-  });
-
-  factory DirectMessage.fromJson(Map<String, dynamic> json) {
-    return DirectMessage(
-      id: json['id'],
-      senderId: json['sender_id'],
-      receiverId: json['receiver_id'],
-      content: json['content'],
-      mediaType: json['media_type'],
-      mediaPath: json['media_path'],
-      createdAt: DateTime.parse(json['created_at']),
-      senderUsername: json['sender_username'],
-      senderProfileImage: json['sender_profile_image'],
-    );
-  }
-}
-
-class GroupMessage {
-  final int id;
-  final int senderId;
-  final String senderUsername;
-  final String? senderProfileImage;
-  final bool senderIsBlue;
-  final String? content;
-  final String? mediaType;
-  final String? mediaPath;
-  final DateTime createdAt;
-
-  GroupMessage({
-    required this.id,
-    required this.senderId,
-    required this.senderUsername,
-    this.senderProfileImage,
-    required this.senderIsBlue,
-    this.content,
-    this.mediaType,
-    this.mediaPath,
-    required this.createdAt,
-  });
-
-  factory GroupMessage.fromJson(Map<String, dynamic> json) {
-    return GroupMessage(
-      id: json['id'],
-      senderId: json['sender_id'],
-      senderUsername: json['username'],
-      senderProfileImage: json['profile_image'],
-      senderIsBlue: json['is_blue'] == 1,
-      content: json['content'],
-      mediaType: json['media_type'],
-      mediaPath: json['media_path'],
-      createdAt: DateTime.parse(json['created_at']),
-    );
-  }
 }
 
 // -------------------- API Service --------------------
 class ApiService {
-  static const String baseUrl = 'https://tweeter.runflare.run';
-  static const String staticUrl = 'https://tweeter.runflare.run/static/';
+  static const String baseUrl = 'https://amirsoft.onrender.com/price/';
 
-  final http.Client client = http.Client();
-
-  // Auth
-  Future<Map<String, dynamic>> register(String username, String password, String bio, File? profileImage) async {
-    var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/register'));
-    request.fields['username'] = username;
-    request.fields['password'] = password;
-    request.fields['bio'] = bio;
-    if (profileImage != null) {
-      request.files.add(await http.MultipartFile.fromPath('profile_image', profileImage.path));
+  static Future<double?> fetchPrice(String obj) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl$obj'));
+      if (response.statusCode == 200) {
+        return double.tryParse(response.body);
+      }
+    } catch (e) {
+      print('Error fetching $obj: $e');
     }
-    var response = await request.send();
-    var responseData = await http.Response.fromStream(response);
-    if (response.statusCode == 201) {
-      return jsonDecode(responseData.body);
-    } else {
-      throw Exception(responseData.body);
-    }
+    return null;
   }
 
-  Future<Map<String, dynamic>> login(String username, String password) async {
-    var response = await client.post(
-      Uri.parse('$baseUrl/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'username': username, 'password': password}),
-    );
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception(response.body);
+  // دریافت همه قیمت‌های مورد نیاز
+  static Future<Map<String, double>> fetchAllPrices() async {
+    final types = ['gold18', 'gold24', 'ons', 'dollar', 'sekke', 'sekkenim', 'sekkerob', 'bahar'];
+    Map<String, double> prices = {};
+    for (String type in types) {
+      final price = await fetchPrice(type);
+      if (price != null) prices[type] = price;
     }
-  }
-
-  Future<User> getProfile(int userId) async {
-    var response = await client.get(Uri.parse('$baseUrl/profile/$userId'));
-    if (response.statusCode == 200) {
-      return User.fromJson(jsonDecode(response.body));
-    } else {
-      throw Exception('Failed to load profile');
-    }
-  }
-
-  Future<void> updateProfile(int userId, String? bio, File? profileImage) async {
-    var request = http.MultipartRequest('PUT', Uri.parse('$baseUrl/profile/$userId'));
-    request.fields['user_id'] = userId.toString();
-    if (bio != null) request.fields['bio'] = bio;
-    if (profileImage != null) {
-      request.files.add(await http.MultipartFile.fromPath('profile_image', profileImage.path));
-    }
-    var response = await request.send();
-    if (response.statusCode != 200) {
-      var data = await http.Response.fromStream(response);
-      throw Exception(data.body);
-    }
-  }
-
-  // Posts
-  Future<List<Post>> getPosts({int page = 1, int perPage = 10}) async {
-    var response = await client.get(Uri.parse('$baseUrl/posts?page=$page&per_page=$perPage'));
-    if (response.statusCode == 200) {
-      List<dynamic> list = jsonDecode(response.body);
-      return list.map((e) => Post.fromJson(e)).toList();
-    } else {
-      throw Exception('Failed to load posts');
-    }
-  }
-
-  Future<Post> getPost(int postId, {int? userId}) async {
-    var url = '$baseUrl/post/$postId';
-    if (userId != null) url += '?user_id=$userId';
-    var response = await client.get(Uri.parse(url));
-    if (response.statusCode == 200) {
-      return Post.fromJson(jsonDecode(response.body));
-    } else {
-      throw Exception('Failed to load post');
-    }
-  }
-
-  Future<Map<String, dynamic>> uploadPost(int userId, String caption, File? mediaFile) async {
-    var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/upload'));
-    request.fields['user_id'] = userId.toString();
-    request.fields['caption'] = caption;
-    if (mediaFile != null) {
-      request.files.add(await http.MultipartFile.fromPath('media', mediaFile.path));
-    }
-    var response = await request.send();
-    var responseData = await http.Response.fromStream(response);
-    if (response.statusCode == 201) {
-      return jsonDecode(responseData.body);
-    } else {
-      throw Exception(responseData.body);
-    }
-  }
-
-  Future<void> updatePost(int postId, int userId, String newCaption) async {
-    var response = await client.put(
-      Uri.parse('$baseUrl/post/$postId'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': userId, 'caption': newCaption}),
-    );
-    if (response.statusCode != 200) throw Exception(response.body);
-  }
-
-  Future<void> deletePost(int postId, int userId) async {
-    var response = await client.delete(Uri.parse('$baseUrl/post/$postId?user_id=$userId'));
-    if (response.statusCode != 200) throw Exception(response.body);
-  }
-
-  // Likes
-  Future<Map<String, dynamic>> toggleLike(int postId, int userId) async {
-    var response = await client.post(
-      Uri.parse('$baseUrl/like'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'post_id': postId, 'user_id': userId}),
-    );
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception(response.body);
-    }
-  }
-
-  // Bookmarks
-  Future<Map<String, dynamic>> toggleBookmark(int postId, int userId) async {
-    var response = await client.post(
-      Uri.parse('$baseUrl/bookmark'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'post_id': postId, 'user_id': userId}),
-    );
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception(response.body);
-    }
-  }
-
-  Future<List<Post>> getBookmarks(int userId, {int page = 1, int perPage = 10}) async {
-    var response = await client.get(Uri.parse('$baseUrl/bookmarks/$userId?page=$page&per_page=$perPage'));
-    if (response.statusCode == 200) {
-      List<dynamic> list = jsonDecode(response.body);
-      return list.map((e) => Post.fromJson(e)).toList();
-    } else {
-      throw Exception('Failed to load bookmarks');
-    }
-  }
-
-  // Comments
-  Future<Map<String, dynamic>> addComment(int postId, int userId, String content, {int? parentId}) async {
-    var response = await client.post(
-      Uri.parse('$baseUrl/comment'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'post_id': postId,
-        'user_id': userId,
-        'content': content,
-        if (parentId != null) 'parent_id': parentId,
-      }),
-    );
-    if (response.statusCode == 201) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception(response.body);
-    }
-  }
-
-  Future<void> updateComment(int commentId, int userId, String newContent) async {
-    var response = await client.put(
-      Uri.parse('$baseUrl/comment/$commentId'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': userId, 'content': newContent}),
-    );
-    if (response.statusCode != 200) throw Exception(response.body);
-  }
-
-  Future<void> deleteComment(int commentId, int userId) async {
-    var response = await client.delete(Uri.parse('$baseUrl/comment/$commentId?user_id=$userId'));
-    if (response.statusCode != 200) throw Exception(response.body);
-  }
-
-  Future<Map<String, dynamic>> toggleCommentLike(int commentId, int userId) async {
-    var response = await client.post(
-      Uri.parse('$baseUrl/comment/$commentId/like'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': userId}),
-    );
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception(response.body);
-    }
-  }
-
-  // Direct Messages
-  Future<Map<String, dynamic>> sendDirectMessage(int senderId, int receiverId, String content, File? mediaFile) async {
-    var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/direct/send'));
-    request.fields['sender_id'] = senderId.toString();
-    request.fields['receiver_id'] = receiverId.toString();
-    request.fields['content'] = content;
-    if (mediaFile != null) {
-      request.files.add(await http.MultipartFile.fromPath('media', mediaFile.path));
-    }
-    var response = await request.send();
-    var responseData = await http.Response.fromStream(response);
-    if (response.statusCode == 201) {
-      return jsonDecode(responseData.body);
-    } else {
-      throw Exception(responseData.body);
-    }
-  }
-
-  Future<List<DirectMessage>> getDirectMessages(int userId, int otherId, {int page = 1, int perPage = 20}) async {
-    var response = await client.get(Uri.parse('$baseUrl/direct/messages/$userId?other_id=$otherId&page=$page&per_page=$perPage'));
-    if (response.statusCode == 200) {
-      List<dynamic> list = jsonDecode(response.body);
-      return list.map((e) => DirectMessage.fromJson(e)).toList();
-    } else {
-      throw Exception('Failed to load messages');
-    }
-  }
-
-  // Group Messages
-  Future<Map<String, dynamic>> sendGroupMessage(int senderId, String content, File? mediaFile) async {
-    var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/group/send'));
-    request.fields['sender_id'] = senderId.toString();
-    request.fields['content'] = content;
-    if (mediaFile != null) {
-      request.files.add(await http.MultipartFile.fromPath('media', mediaFile.path));
-    }
-    var response = await request.send();
-    var responseData = await http.Response.fromStream(response);
-    if (response.statusCode == 201) {
-      return jsonDecode(responseData.body);
-    } else {
-      throw Exception(responseData.body);
-    }
-  }
-
-  Future<List<GroupMessage>> getGroupMessages({int page = 1, int perPage = 20}) async {
-    var response = await client.get(Uri.parse('$baseUrl/group/messages?page=$page&per_page=$perPage'));
-    if (response.statusCode == 200) {
-      List<dynamic> list = jsonDecode(response.body);
-      return list.map((e) => GroupMessage.fromJson(e)).toList();
-    } else {
-      throw Exception('Failed to load group messages');
-    }
-  }
-
-  // Users list
-  Future<Map<String, dynamic>> getAllUsers({int page = 1, int perPage = 20, String search = ''}) async {
-    var url = '$baseUrl/users?page=$page&per_page=$perPage';
-    if (search.isNotEmpty) url += '&search=$search';
-    var response = await client.get(Uri.parse(url));
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception('Failed to load users');
-    }
-  }
-
-  // Blue tick (admin)
-  Future<void> giveBlue(String username) async {
-    var response = await client.post(Uri.parse('$baseUrl/give_blue/$username'));
-    if (response.statusCode != 200) throw Exception(response.body);
+    return prices;
   }
 }
 
 // -------------------- Providers --------------------
-class AuthProvider extends ChangeNotifier {
-  int? _currentUserId;
-  User? _currentUser;
-  final ApiService _api = ApiService();
-  final SharedPreferences _prefs;
+class PriceProvider extends ChangeNotifier {
+  Map<String, double> _prices = {};
+  DateTime _lastUpdated = DateTime.now();
+  Timer? _timer;
 
-  AuthProvider(this._prefs) {
-    _currentUserId = _prefs.getInt('userId');
-    if (_currentUserId != null) {
-      loadCurrentUser();
-    }
+  Map<String, double> get prices => UnmodifiableMapView(_prices);
+  DateTime get lastUpdated => _lastUpdated;
+
+  PriceProvider() {
+    fetchPrices();
+    startAutoUpdate();
   }
 
-  int? get currentUserId => _currentUserId;
-  User? get currentUser => _currentUser;
-  bool get isLoggedIn => _currentUserId != null;
+  void startAutoUpdate({int intervalSeconds = 300}) {
+    _timer?.cancel();
+    _timer = Timer.periodic(Duration(seconds: intervalSeconds), (_) => fetchPrices());
+  }
 
-  Future<void> loadCurrentUser() async {
-    if (_currentUserId == null) return;
-    try {
-      _currentUser = await _api.getProfile(_currentUserId!);
+  void setAutoUpdateInterval(int seconds) {
+    startAutoUpdate(intervalSeconds: seconds);
+  }
+
+  Future<void> fetchPrices() async {
+    final newPrices = await ApiService.fetchAllPrices();
+    if (newPrices.isNotEmpty) {
+      _prices = newPrices;
+      _lastUpdated = DateTime.now();
       notifyListeners();
-    } catch (e) {
-      print(e);
-    }
-  }
-
-  Future<void> login(String username, String password) async {
-    var data = await _api.login(username, password);
-    int userId = data['user_id'];
-    await _prefs.setInt('userId', userId);
-    _currentUserId = userId;
-    await loadCurrentUser();
-  }
-
-  Future<void> register(String username, String password, String bio, File? profileImage) async {
-    var data = await _api.register(username, password, bio, profileImage);
-    int userId = data['user_id'];
-    await _prefs.setInt('userId', userId);
-    _currentUserId = userId;
-    await loadCurrentUser();
-  }
-
-  Future<void> logout() async {
-    await _prefs.remove('userId');
-    _currentUserId = null;
-    _currentUser = null;
-    notifyListeners();
-  }
-
-  Future<void> updateProfile(String? bio, File? profileImage) async {
-    if (_currentUserId == null) return;
-    await _api.updateProfile(_currentUserId!, bio, profileImage);
-    await loadCurrentUser();
-  }
-
-  Future<void> giveBlue(String username) async {
-    await _api.giveBlue(username);
-  }
-}
-
-class PostsProvider extends ChangeNotifier {
-  final ApiService _api = ApiService();
-  List<Post> _posts = [];
-  int _currentPage = 1;
-  bool _hasMore = true;
-  bool _isLoading = false;
-
-  List<Post> get posts => _posts;
-  bool get isLoading => _isLoading;
-  bool get hasMore => _hasMore;
-
-  Future<void> loadPosts({bool refresh = false}) async {
-    if (refresh) {
-      _currentPage = 1;
-      _hasMore = true;
-      _posts = [];
-    }
-    if (_isLoading || !_hasMore) return;
-    _isLoading = true;
-    notifyListeners();
-
-    try {
-      var newPosts = await _api.getPosts(page: _currentPage);
-      if (newPosts.isEmpty) {
-        _hasMore = false;
-      } else {
-        _posts.addAll(newPosts);
-        _currentPage++;
-      }
-    } catch (e) {
-      print(e);
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  void updatePostInList(Post updatedPost) {
-    int index = _posts.indexWhere((p) => p.id == updatedPost.id);
-    if (index != -1) {
-      _posts[index] = updatedPost;
-      notifyListeners();
-    }
-  }
-
-  void removePost(int postId) {
-    _posts.removeWhere((p) => p.id == postId);
-    notifyListeners();
-  }
-}
-
-class BookmarksProvider extends ChangeNotifier {
-  final ApiService _api = ApiService();
-  List<Post> _bookmarks = [];
-  int _currentPage = 1;
-  bool _hasMore = true;
-  bool _isLoading = false;
-
-  List<Post> get bookmarks => _bookmarks;
-  bool get isLoading => _isLoading;
-  bool get hasMore => _hasMore;
-
-  Future<void> loadBookmarks(int userId, {bool refresh = false}) async {
-    if (refresh) {
-      _currentPage = 1;
-      _hasMore = true;
-      _bookmarks = [];
-    }
-    if (_isLoading || !_hasMore) return;
-    _isLoading = true;
-    notifyListeners();
-
-    try {
-      var newBookmarks = await _api.getBookmarks(userId, page: _currentPage);
-      if (newBookmarks.isEmpty) {
-        _hasMore = false;
-      } else {
-        _bookmarks.addAll(newBookmarks);
-        _currentPage++;
-      }
-    } catch (e) {
-      print(e);
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  void removeBookmark(int postId) {
-    _bookmarks.removeWhere((p) => p.id == postId);
-    notifyListeners();
-  }
-}
-
-// -------------------- Helper Widgets --------------------
-class NetworkImageWidget extends StatelessWidget {
-  final String? imageUrl;
-  final double width;
-  final double height;
-  final BoxFit fit;
-
-  const NetworkImageWidget({super.key, this.imageUrl, required this.width, required this.height, this.fit = BoxFit.cover});
-
-  @override
-  Widget build(BuildContext context) {
-    if (imageUrl == null || imageUrl!.isEmpty) {
-      return Container(width: width, height: height, color: Colors.grey[300], child: Icon(Icons.person, color: Colors.grey[600]));
-    }
-    return CachedNetworkImage(
-      imageUrl: ApiService.staticUrl + imageUrl!,
-      width: width,
-      height: height,
-      fit: fit,
-      placeholder: (context, url) => Container(color: Colors.grey[300], child: Center(child: CircularProgressIndicator())),
-      errorWidget: (context, url, error) => Container(color: Colors.grey[300], child: Icon(Icons.error)),
-    );
-  }
-}
-
-class BlueTick extends StatelessWidget {
-  final bool isBlue;
-  final double size;
-
-  const BlueTick({super.key, required this.isBlue, this.size = 16});
-
-  @override
-  Widget build(BuildContext context) {
-    if (!isBlue) return SizedBox.shrink();
-    return Icon(Icons.verified, color: Colors.blue, size: size);
-  }
-}
-
-class MediaDisplay extends StatefulWidget {
-  final String mediaType;
-  final String? mediaPath;
-  final String? thumbnailPath;
-  final double? width;
-  final double? height;
-
-  const MediaDisplay({super.key, required this.mediaType, this.mediaPath, this.thumbnailPath, this.width, this.height});
-
-  @override
-  State<MediaDisplay> createState() => _MediaDisplayState();
-}
-
-class _MediaDisplayState extends State<MediaDisplay> {
-  VideoPlayerController? _videoController;
-  AudioPlayer? _audioPlayer;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.mediaType == 'video' && widget.mediaPath != null) {
-      _videoController = VideoPlayerController.network(ApiService.staticUrl + widget.mediaPath!)
-        ..initialize().then((_) {
-          setState(() {});
-        });
     }
   }
 
   @override
   void dispose() {
-    _videoController?.dispose();
-    _audioPlayer?.dispose();
+    _timer?.cancel();
     super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.mediaPath == null) return SizedBox.shrink();
-
-    String fullUrl = ApiService.staticUrl + widget.mediaPath!;
-    String? thumbUrl = widget.thumbnailPath != null ? ApiService.staticUrl + widget.thumbnailPath! : null;
-
-    switch (widget.mediaType) {
-      case 'image':
-        return GestureDetector(
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PhotoViewGalleryPage(imageUrl: fullUrl))),
-          child: CachedNetworkImage(
-            imageUrl: fullUrl,
-            width: widget.width,
-            height: widget.height,
-            fit: BoxFit.cover,
-            placeholder: (_, __) => Container(color: Colors.grey[300], child: Center(child: CircularProgressIndicator())),
-            errorWidget: (_, __, ___) => Container(color: Colors.grey[300], child: Icon(Icons.broken_image)),
-          ),
-        );
-      case 'video':
-        return _videoController != null && _videoController!.value.isInitialized
-            ? AspectRatio(
-                aspectRatio: _videoController!.value.aspectRatio,
-                child: VideoPlayer(_videoController!),
-              )
-            : thumbUrl != null
-                ? CachedNetworkImage(imageUrl: thumbUrl, fit: BoxFit.cover)
-                : Container(color: Colors.black, child: Center(child: CircularProgressIndicator()));
-      case 'audio':
-        return ListTile(
-          leading: Icon(Icons.audio_file),
-          title: Text('Audio file'),
-          subtitle: Text(widget.mediaPath!.split('/').last),
-          onTap: () {
-            _audioPlayer ??= AudioPlayer();
-            _audioPlayer!.play(UrlSource(fullUrl));
-          },
-        );
-      default:
-        return ListTile(
-          leading: Icon(Icons.insert_drive_file),
-          title: Text('File'),
-          subtitle: Text(widget.mediaPath!.split('/').last),
-          onTap: () {
-            // می‌توانید با url_launcher باز کنید
-          },
-        );
-    }
   }
 }
 
-class PhotoViewGalleryPage extends StatelessWidget {
-  final String imageUrl;
+class SettingsProvider extends ChangeNotifier {
+  double _bankInterestRate = 26.0; // درصد
+  int _autoUpdateInterval = 300; // ثانیه
 
-  const PhotoViewGalleryPage({super.key, required this.imageUrl});
+  double get bankInterestRate => _bankInterestRate;
+  int get autoUpdateInterval => _autoUpdateInterval;
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: PhotoView(
-        imageProvider: CachedNetworkImageProvider(imageUrl),
-        backgroundDecoration: BoxDecoration(color: Colors.black),
+  final SharedPreferences _prefs;
+
+  SettingsProvider(this._prefs) {
+    _loadSettings();
+  }
+
+  void _loadSettings() {
+    _bankInterestRate = _prefs.getDouble('bankInterestRate') ?? 26.0;
+    _autoUpdateInterval = _prefs.getInt('autoUpdateInterval') ?? 300;
+  }
+
+  Future<void> setBankInterestRate(double value) async {
+    _bankInterestRate = value;
+    await _prefs.setDouble('bankInterestRate', value);
+    notifyListeners();
+  }
+
+  Future<void> setAutoUpdateInterval(int seconds) async {
+    _autoUpdateInterval = seconds;
+    await _prefs.setInt('autoUpdateInterval', seconds);
+    notifyListeners();
+  }
+}
+
+class DataProvider extends ChangeNotifier {
+  final Box<GoldTransaction> goldBox;
+  final Box<CoinTransaction> coinBox;
+
+  DataProvider({required this.goldBox, required this.coinBox}) {
+    _ensureDefaultData();
+  }
+
+  void _ensureDefaultData() {
+    if (goldBox.isEmpty) {
+      _addDefaultGold();
+    }
+    if (coinBox.isEmpty) {
+      _addDefaultCoins();
+    }
+  }
+
+  void _addDefaultGold() {
+    final golds = [
+      GoldTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + '1',
+        type: 'gold18',
+        purchaseDate: DateTime(2025, 1, 2),
+        purchasePricePerUnit: 52518583,
+        quantity: 100,
+        description: '',
+        isGold: true,
       ),
-    );
+      GoldTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + '2',
+        type: 'gold18',
+        purchaseDate: DateTime(2025, 2, 9),
+        purchasePricePerUnit: 65792511,
+        quantity: 61.195,
+        description: '',
+        isGold: true,
+      ),
+      GoldTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + '3',
+        type: 'gold18',
+        purchaseDate: DateTime(2025, 4, 13),
+        purchasePricePerUnit: 76180802,
+        quantity: 50,
+        description: '',
+        isGold: true,
+      ),
+      GoldTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + '4',
+        type: 'gold18',
+        purchaseDate: DateTime(2025, 10, 6),
+        purchasePricePerUnit: 105960571,
+        quantity: 100,
+        description: '',
+        isGold: true,
+      ),
+      GoldTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + '5',
+        type: 'gold18',
+        purchaseDate: DateTime(2025, 11, 10),
+        purchasePricePerUnit: 105730000,
+        quantity: 60,
+        description: '',
+        isGold: true,
+      ),
+      GoldTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + '6',
+        type: 'gold18',
+        purchaseDate: DateTime(2025, 12, 14),
+        purchasePricePerUnit: 138048000,
+        quantity: 15,
+        description: '',
+        isGold: true,
+      ),
+    ];
+    goldBox.addAll(golds);
+  }
+
+  void _addDefaultCoins() {
+    final coins = [
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c1',
+        coinType: 'sekkerob',
+        purchaseDate: DateTime(2023, 1, 17),
+        purchasePricePerUnit: 70500000,
+        count: 3,
+        description: 'خرید از بورس کالای کارگزاری آگاه',
+      ),
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c2',
+        coinType: 'sekke',
+        purchaseDate: DateTime(2025, 1, 1),
+        purchasePricePerUnit: 560000000,
+        count: 2,
+        description: 'خرید از زهرا',
+      ),
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c3',
+        coinType: 'sekkerob',
+        purchaseDate: DateTime(2025, 1, 1),
+        purchasePricePerUnit: 174000000,
+        count: 1,
+        description: 'خرید از زهرا',
+      ),
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c4',
+        coinType: 'sekke',
+        purchaseDate: DateTime(2025, 9, 8),
+        purchasePricePerUnit: 832224932,
+        count: 6,
+        description: 'خرید از مرکز مبادلات سکه و ارز',
+      ),
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c5',
+        coinType: 'sekkenim',
+        purchaseDate: DateTime(2025, 9, 8),
+        purchasePricePerUnit: 441195425,
+        count: 10,
+        description: 'خرید از مرکز مبادلات سکه و ارز',
+      ),
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c6',
+        coinType: 'sekkerob',
+        purchaseDate: DateTime(2025, 9, 8),
+        purchasePricePerUnit: 257758617,
+        count: 14,
+        description: 'خرید از مرکز مبادلات سکه و ارز',
+      ),
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c7',
+        coinType: 'sekkenim',
+        purchaseDate: DateTime(2025, 11, 12),
+        purchasePricePerUnit: 575585000,
+        count: 1,
+        description: 'خرید از مرکز مبادلات کاربری مریم',
+      ),
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c8',
+        coinType: 'sekkerob',
+        purchaseDate: DateTime(2025, 11, 12),
+        purchasePricePerUnit: 327850000,
+        count: 2,
+        description: 'خرید از مرکز مبادلات کابری مریم',
+      ),
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c9',
+        coinType: 'sekke',
+        purchaseDate: DateTime(2026, 2, 15),
+        purchasePricePerUnit: 1930000000,
+        count: 4,
+        description: 'خرید از علی بابت پول ماشین',
+      ),
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c10',
+        coinType: 'sekkerob',
+        purchaseDate: DateTime(2026, 2, 15),
+        purchasePricePerUnit: 525000000,
+        count: 6,
+        description: 'خرید از علی بابت پول ماشین',
+      ),
+      CoinTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString() + 'c11',
+        coinType: 'sekkenim',
+        purchaseDate: DateTime(2026, 2, 15),
+        purchasePricePerUnit: 970000000,
+        count: 3,
+        description: 'خرید از علی بابت پول ماشین',
+      ),
+    ];
+    coinBox.addAll(coins);
+  }
+
+  // CRUD for Gold
+  List<GoldTransaction> get goldList => goldBox.values.toList();
+
+  Future<void> addGold(GoldTransaction transaction) async {
+    await goldBox.add(transaction);
+    notifyListeners();
+  }
+
+  Future<void> updateGold(GoldTransaction transaction) async {
+    await transaction.save();
+    notifyListeners();
+  }
+
+  Future<void> deleteGold(GoldTransaction transaction) async {
+    await transaction.delete();
+    notifyListeners();
+  }
+
+  // CRUD for Coin
+  List<CoinTransaction> get coinList => coinBox.values.toList();
+
+  Future<void> addCoin(CoinTransaction transaction) async {
+    await coinBox.add(transaction);
+    notifyListeners();
+  }
+
+  Future<void> updateCoin(CoinTransaction transaction) async {
+    await transaction.save();
+    notifyListeners();
+  }
+
+  Future<void> deleteCoin(CoinTransaction transaction) async {
+    await transaction.delete();
+    notifyListeners();
+  }
+}
+
+// -------------------- Utility Functions --------------------
+class Calculator {
+  static int daysBetween(DateTime from, DateTime to) {
+    from = DateTime(from.year, from.month, from.day);
+    to = DateTime(to.year, to.month, to.day);
+    return (to.difference(from).inHours / 24).round();
+  }
+
+  static double calculateProfit({
+    required double currentPrice,
+    required double purchasePrice,
+    required double quantity,
+    required double paidAmount,
+    required double interestRate,
+    required int days,
+  }) {
+    final currentValue = currentPrice * quantity;
+    final purchaseProfit = currentValue - paidAmount;
+    final bankProfit = (paidAmount * interestRate * days) / 36500;
+    return purchaseProfit - bankProfit;
   }
 }
 
 // -------------------- Screens --------------------
-// Login/Register
-class AuthScreen extends StatefulWidget {
-  @override
-  State<AuthScreen> createState() => _AuthScreenState();
-}
-
-class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateMixin {
-  bool isLogin = true;
-  final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _bioController = TextEditingController();
-  File? _profileImage;
-  final ImagePicker _picker = ImagePicker();
-  late AnimationController _animationController;
-  late Animation<double> _fadeAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _animationController = AnimationController(vsync: this, duration: Duration(milliseconds: 300));
-    _fadeAnimation = CurvedAnimation(parent: _animationController, curve: Curves.easeIn);
-    _animationController.forward();
-  }
-
-  @override
-  void dispose() {
-    _animationController.dispose();
-    super.dispose();
-  }
-
-  void _toggleMode() {
-    setState(() => isLogin = !isLogin);
-    _animationController.reset();
-    _animationController.forward();
-  }
-
-  Future<void> _pickImage() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (picked != null) setState(() => _profileImage = File(picked.path));
-  }
-
-  void _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    try {
-      if (isLogin) {
-        await auth.login(_usernameController.text, _passwordController.text);
-      } else {
-        await auth.register(_usernameController.text, _passwordController.text, _bioController.text, _profileImage);
-      }
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => MainScreen()));
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    }
-  }
-
+class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final priceProvider = Provider.of<PriceProvider>(context);
+    final dataProvider = Provider.of<DataProvider>(context);
+    final settings = Provider.of<SettingsProvider>(context);
+
+    final goldList = dataProvider.goldList;
+    final coinList = dataProvider.coinList;
+
+    // محاسبه مجموع ارزش طلا
+    double totalGoldValue = 0;
+    double totalGoldPaid = 0;
+    for (var g in goldList) {
+      final currentPrice = priceProvider.prices[g.type] ?? 0;
+      totalGoldValue += currentPrice * g.quantity;
+      totalGoldPaid += g.purchasePricePerUnit * g.quantity;
+    }
+
+    // محاسبه مجموع ارزش سکه
+    double totalCoinValue = 0;
+    double totalCoinPaid = 0;
+    for (var c in coinList) {
+      final currentPrice = priceProvider.prices[c.coinType] ?? 0;
+      totalCoinValue += currentPrice * c.count;
+      totalCoinPaid += c.purchasePricePerUnit * c.count;
+    }
+
+    final totalAssets = totalGoldValue + totalCoinValue;
+    final totalPaid = totalGoldPaid + totalCoinPaid;
+    final totalProfit = totalAssets - totalPaid;
+
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(gradient: LinearGradient(colors: [Colors.purple, Colors.blue], begin: Alignment.topLeft, end: Alignment.bottomRight)),
-        child: Center(
-          child: FadeTransition(
-            opacity: _fadeAnimation,
-            child: SingleChildScrollView(
-              padding: EdgeInsets.all(24),
-              child: Card(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
+      appBar: AppBar(title: Text('خلاصه دارایی'), centerTitle: true),
+      body: RefreshIndicator(
+        onRefresh: () => priceProvider.fetchPrices(),
+        child: ListView(
+          padding: EdgeInsets.all(16),
+          children: [
+            Card(
+              elevation: 4,
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Text('آخرین به‌روزرسانی: ${DateFormat('yyyy/MM/dd HH:mm').format(priceProvider.lastUpdated)}',
+                        style: Theme.of(context).textTheme.bodySmall),
+                    SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
-                        Text(isLogin ? 'Welcome Back' : 'Create Account', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                        SizedBox(height: 20),
-                        if (!isLogin) ...[
-                          GestureDetector(
-                            onTap: _pickImage,
-                            child: CircleAvatar(
-                              radius: 50,
-                              backgroundImage: _profileImage != null ? FileImage(_profileImage!) : null,
-                              child: _profileImage == null ? Icon(Icons.camera_alt, size: 30) : null,
-                            ),
-                          ),
-                          SizedBox(height: 10),
-                        ],
-                        TextFormField(
-                          controller: _usernameController,
-                          decoration: InputDecoration(labelText: 'Username'),
-                          validator: (v) => v!.isEmpty ? 'Required' : null,
-                        ),
-                        TextFormField(
-                          controller: _passwordController,
-                          decoration: InputDecoration(labelText: 'Password'),
-                          obscureText: true,
-                          validator: (v) => v!.isEmpty ? 'Required' : null,
-                        ),
-                        if (!isLogin) ...[
-                          TextFormField(
-                            controller: _bioController,
-                            decoration: InputDecoration(labelText: 'Bio'),
-                            maxLines: 3,
-                          ),
-                        ],
-                        SizedBox(height: 20),
-                        ElevatedButton(
-                          onPressed: _submit,
-                          child: Text(isLogin ? 'Login' : 'Register'),
-                          style: ElevatedButton.styleFrom(minimumSize: Size(double.infinity, 50)),
-                        ),
-                        TextButton(
-                          onPressed: _toggleMode,
-                          child: Text(isLogin ? 'Need an account? Register' : 'Already have an account? Login'),
-                        ),
+                        _buildSummaryItem(context, 'کل دارایی', NumberFormat('#,###').format(totalAssets), Colors.green),
+                        _buildSummaryItem(context, 'سود/زیان', NumberFormat('#,###').format(totalProfit), totalProfit >= 0 ? Colors.green : Colors.red),
+                      ],
+                    ),
+                    SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _buildSummaryItem(context, 'طلای آب شده', NumberFormat('#,###').format(totalGoldValue), Colors.amber),
+                        _buildSummaryItem(context, 'سکه', NumberFormat('#,###').format(totalCoinValue), Colors.blue),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: 20),
+            Text('نمودار توزیع دارایی', style: Theme.of(context).textTheme.titleMedium),
+            SizedBox(height: 10),
+            Container(
+              height: 200,
+              child: PieChart(
+                PieChartData(
+                  sections: [
+                    PieChartSectionData(
+                      value: totalGoldValue,
+                      title: 'طلای آب شده',
+                      color: Colors.amber,
+                      radius: 50,
+                    ),
+                    PieChartSectionData(
+                      value: totalCoinValue,
+                      title: 'سکه',
+                      color: Colors.blue,
+                      radius: 50,
+                    ),
+                  ],
+                  sectionsSpace: 2,
+                  centerSpaceRadius: 40,
+                ),
+              ),
+            ),
+            SizedBox(height: 20),
+            Text('قیمت‌های لحظه‌ای', style: Theme.of(context).textTheme.titleMedium),
+            SizedBox(height: 10),
+            GridView.count(
+              shrinkWrap: true,
+              physics: NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              childAspectRatio: 2,
+              children: priceProvider.prices.entries.map((e) {
+                return Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(_getPersianName(e.key), style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text(NumberFormat('#,###').format(e.value)),
                       ],
                     ),
                   ),
-                ),
-              ),
+                );
+              }).toList(),
             ),
-          ),
+          ],
         ),
       ),
     );
   }
-}
 
-// Main Screen with Bottom Navigation
-class MainScreen extends StatefulWidget {
-  @override
-  State<MainScreen> createState() => _MainScreenState();
-}
-
-class _MainScreenState extends State<MainScreen> {
-  int _currentIndex = 0;
-  late PageController _pageController;
-
-  @override
-  void initState() {
-    super.initState();
-    _pageController = PageController();
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
-  }
-
-  void _onTabTapped(int index) {
-    setState(() => _currentIndex = index);
-    _pageController.animateToPage(index, duration: Duration(milliseconds: 300), curve: Curves.ease);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final auth = Provider.of<AuthProvider>(context);
-    return Scaffold(
-      body: PageView(
-        controller: _pageController,
-        onPageChanged: (index) => setState(() => _currentIndex = index),
-        children: [
-          FeedScreen(),
-          ExploreScreen(),
-          PostUploadScreen(),
-          DirectMessagesScreen(),
-          ProfileScreen(userId: auth.currentUserId!),
-        ],
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: _onTabTapped,
-        type: BottomNavigationBarType.fixed,
-        items: [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Feed'),
-          BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Explore'),
-          BottomNavigationBarItem(icon: Icon(Icons.add_box), label: 'Post'),
-          BottomNavigationBarItem(icon: Icon(Icons.message), label: 'Direct'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-        ],
-      ),
-    );
-  }
-}
-
-// Feed Screen
-class FeedScreen extends StatefulWidget {
-  @override
-  State<FeedScreen> createState() => _FeedScreenState();
-}
-
-class _FeedScreenState extends State<FeedScreen> {
-  final ScrollController _scrollController = ScrollController();
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<PostsProvider>().loadPosts(refresh: true);
-    });
-    _scrollController.addListener(_onScroll);
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-      context.read<PostsProvider>().loadPosts();
-    }
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final auth = Provider.of<AuthProvider>(context);
-    return Scaffold(
-      appBar: AppBar(title: Text('Feed'), actions: [
-        IconButton(icon: Icon(Icons.bookmark), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => BookmarksScreen()))),
-        IconButton(icon: Icon(Icons.group), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GroupChatScreen()))),
-      ]),
-      body: Consumer<PostsProvider>(
-        builder: (context, provider, child) {
-          if (provider.posts.isEmpty && provider.isLoading) {
-            return Center(child: CircularProgressIndicator());
-          }
-          return AnimationLimiter(
-            child: ListView.builder(
-              controller: _scrollController,
-              itemCount: provider.posts.length + (provider.hasMore ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index == provider.posts.length) {
-                  return Center(child: CircularProgressIndicator());
-                }
-                final post = provider.posts[index];
-                return AnimationConfiguration.staggeredList(
-                  position: index,
-                  duration: Duration(milliseconds: 375),
-                  child: SlideAnimation(
-                    verticalOffset: 50,
-                    child: FadeInAnimation(
-                      child: PostCard(post: post, userId: auth.currentUserId!),
-                    ),
-                  ),
-                );
-              },
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class PostCard extends StatefulWidget {
-  final Post post;
-  final int userId;
-
-  const PostCard({super.key, required this.post, required this.userId});
-
-  @override
-  State<PostCard> createState() => _PostCardState();
-}
-
-class _PostCardState extends State<PostCard> {
-  late Post _post;
-  bool _isLiked = false;
-  bool _isBookmarked = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _post = widget.post;
-    _isLiked = _post.likedByUser;
-    _isBookmarked = _post.bookmarkedByUser;
-  }
-
-  Future<void> _toggleLike() async {
-    final api = ApiService();
-    try {
-      var result = await api.toggleLike(_post.id, widget.userId);
-      setState(() {
-        _isLiked = result['liked'];
-        if (_isLiked) {
-          _post.likesCount++;
-        } else {
-          _post.likesCount--;
-        }
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-    }
-  }
-
-  Future<void> _toggleBookmark() async {
-    final api = ApiService();
-    try {
-      var result = await api.toggleBookmark(_post.id, widget.userId);
-      setState(() {
-        _isBookmarked = result['bookmarked'];
-      });
-      // به‌روزرسانی در BookmarksProvider اگر لازم است
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-    }
-  }
-
-  void _viewProfile() {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: _post.userId)));
-  }
-
-  void _viewPostDetail() {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => PostDetailScreen(postId: _post.id)));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ListTile(
-            leading: GestureDetector(
-              onTap: _viewProfile,
-              child: CircleAvatar(
-                backgroundImage: _post.userProfileImage != null
-                    ? CachedNetworkImageProvider(ApiService.staticUrl + _post.userProfileImage!)
-                    : null,
-                child: _post.userProfileImage == null ? Icon(Icons.person) : null,
-              ),
-            ),
-            title: GestureDetector(
-              onTap: _viewProfile,
-              child: Row(
-                children: [
-                  Text(_post.username, style: TextStyle(fontWeight: FontWeight.bold)),
-                  BlueTick(isBlue: _post.userIsBlue),
-                ],
-              ),
-            ),
-            subtitle: Text(DateFormat.yMMMd().add_jm().format(_post.createdAt)),
-            trailing: _post.userId == widget.userId
-                ? PopupMenuButton(
-                    itemBuilder: (_) => [
-                      PopupMenuItem(child: Text('Edit'), onTap: () => _editPost()),
-                      PopupMenuItem(child: Text('Delete'), onTap: () => _deletePost()),
-                    ],
-                  )
-                : null,
-          ),
-          if (_post.caption != null && _post.caption!.isNotEmpty)
-            Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text(_post.caption!)),
-          if (_post.mediaPath != null)
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: MediaDisplay(
-                  mediaType: _post.mediaType,
-                  mediaPath: _post.mediaPath,
-                  thumbnailPath: _post.thumbnailPath,
-                ),
-              ),
-            ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              IconButton(
-                icon: Icon(_isLiked ? Icons.favorite : Icons.favorite_border, color: _isLiked ? Colors.red : null),
-                onPressed: _toggleLike,
-              ),
-              Text('${_post.likesCount}'),
-              IconButton(
-                icon: Icon(Icons.comment),
-                onPressed: _viewPostDetail,
-              ),
-              Text('${_post.commentsCount}'),
-              IconButton(
-                icon: Icon(_isBookmarked ? Icons.bookmark : Icons.bookmark_border, color: _isBookmarked ? Colors.amber : null),
-                onPressed: _toggleBookmark,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _editPost() async {
-    String? newCaption = await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Edit caption'),
-        content: TextField(
-          controller: TextEditingController(text: _post.caption),
-          decoration: InputDecoration(hintText: 'New caption'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel')),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context, (context as TextField).controller?.text);
-            },
-            child: Text('Save'),
-          ),
-        ],
-      ),
-    );
-    if (newCaption != null && newCaption != _post.caption) {
-      try {
-        await ApiService().updatePost(_post.id, widget.userId, newCaption);
-        setState(() => _post.caption = newCaption);
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
-    }
-  }
-
-  void _deletePost() async {
-    bool confirm = await showDialog(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: Text('Delete post'),
-            content: Text('Are you sure?'),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: Text('No')),
-              TextButton(onPressed: () => Navigator.pop(context, true), child: Text('Yes')),
-            ],
-          ),
-        ) ??
-        false;
-    if (confirm) {
-      try {
-        await ApiService().deletePost(_post.id, widget.userId);
-        context.read<PostsProvider>().removePost(_post.id);
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
-    }
-  }
-}
-
-// Post Detail
-class PostDetailScreen extends StatefulWidget {
-  final int postId;
-
-  const PostDetailScreen({super.key, required this.postId});
-
-  @override
-  State<PostDetailScreen> createState() => _PostDetailScreenState();
-}
-
-class _PostDetailScreenState extends State<PostDetailScreen> {
-  late Future<Post> _postFuture;
-  final TextEditingController _commentController = TextEditingController();
-  int? _replyingTo; // parent comment id
-
-  @override
-  void initState() {
-    super.initState();
-    _loadPost();
-  }
-
-  void _loadPost() {
-    final userId = context.read<AuthProvider>().currentUserId!;
-    _postFuture = ApiService().getPost(widget.postId, userId: userId);
-  }
-
-  void _submitComment() async {
-    if (_commentController.text.trim().isEmpty) return;
-    try {
-      await ApiService().addComment(widget.postId, context.read<AuthProvider>().currentUserId!, _commentController.text, parentId: _replyingTo);
-      _commentController.clear();
-      setState(() {
-        _replyingTo = null;
-        _loadPost(); // refresh
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Post')),
-      body: FutureBuilder<Post>(
-        future: _postFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(child: CircularProgressIndicator());
-          }
-          if (!snapshot.hasData) {
-            return Center(child: Text('Failed to load post'));
-          }
-          final post = snapshot.data!;
-          return Column(
-            children: [
-              Expanded(
-                child: ListView(
-                  children: [
-                    PostCard(post: post, userId: context.read<AuthProvider>().currentUserId!),
-                    if (_replyingTo != null)
-                      Padding(
-                        padding: EdgeInsets.all(8),
-                        child: Container(
-                          color: Colors.blue[50],
-                          padding: EdgeInsets.all(8),
-                          child: Row(
-                            children: [
-                              Text('Replying...'),
-                              IconButton(icon: Icon(Icons.close), onPressed: () => setState(() => _replyingTo = null)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ...?post.comments?.map((c) => CommentTile(comment: c, userId: context.read<AuthProvider>().currentUserId!, onReply: (cid) => setState(() => _replyingTo = cid))),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: EdgeInsets.all(8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _commentController,
-                        decoration: InputDecoration(hintText: 'Add a comment...', border: OutlineInputBorder()),
-                      ),
-                    ),
-                    IconButton(onPressed: _submitComment, icon: Icon(Icons.send)),
-                  ],
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class CommentTile extends StatefulWidget {
-  final Comment comment;
-  final int userId;
-  final Function(int) onReply;
-
-  const CommentTile({super.key, required this.comment, required this.userId, required this.onReply});
-
-  @override
-  State<CommentTile> createState() => _CommentTileState();
-}
-
-class _CommentTileState extends State<CommentTile> {
-  bool _isLiked = false;
-  late int _likesCount;
-
-  @override
-  void initState() {
-    super.initState();
-    _isLiked = widget.comment.likedByUser;
-    _likesCount = widget.comment.likesCount;
-  }
-
-  Future<void> _toggleLike() async {
-    try {
-      var result = await ApiService().toggleCommentLike(widget.comment.id, widget.userId);
-      setState(() {
-        _isLiked = result['liked'];
-        if (_isLiked) {
-          _likesCount++;
-        } else {
-          _likesCount--;
-        }
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CircleAvatar(
-            radius: 16,
-            backgroundImage: widget.comment.userProfileImage != null ? CachedNetworkImageProvider(ApiService.staticUrl + widget.comment.userProfileImage!) : null,
-            child: widget.comment.userProfileImage == null ? Icon(Icons.person, size: 16) : null,
-          ),
-          SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                RichText(
-                  text: TextSpan(
-                    style: DefaultTextStyle.of(context).style,
-                    children: [
-                      TextSpan(text: widget.comment.username, style: TextStyle(fontWeight: FontWeight.bold)),
-                      WidgetSpan(child: BlueTick(isBlue: widget.comment.userIsBlue, size: 14)),
-                      TextSpan(text: '  ${widget.comment.content}'),
-                    ],
-                  ),
-                ),
-                Row(
-                  children: [
-                    Text(DateFormat.yMMMd().add_jm().format(widget.comment.createdAt), style: TextStyle(fontSize: 12, color: Colors.grey)),
-                    SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: _toggleLike,
-                      child: Icon(_isLiked ? Icons.favorite : Icons.favorite_border, size: 14, color: _isLiked ? Colors.red : null),
-                    ),
-                    Text(' $_likesCount', style: TextStyle(fontSize: 12)),
-                    SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: () => widget.onReply(widget.comment.id),
-                      child: Text('Reply', style: TextStyle(fontSize: 12, color: Colors.blue)),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// Explore / Users Search
-class ExploreScreen extends StatefulWidget {
-  @override
-  State<ExploreScreen> createState() => _ExploreScreenState();
-}
-
-class _ExploreScreenState extends State<ExploreScreen> {
-  final TextEditingController _searchController = TextEditingController();
-  List<User> _users = [];
-  int _page = 1;
-  bool _hasMore = true;
-  bool _isLoading = false;
-  final ScrollController _scrollController = ScrollController();
-
-  @override
-  void initState() {
-    super.initState();
-    _searchController.addListener(_onSearchChanged);
-    _scrollController.addListener(_onScroll);
-    _loadUsers();
-  }
-
-  void _onSearchChanged() {
-    _page = 1;
-    _users.clear();
-    _hasMore = true;
-    _loadUsers();
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200 && !_isLoading && _hasMore) {
-      _loadUsers();
-    }
-  }
-
-  Future<void> _loadUsers() async {
-    if (_isLoading || !_hasMore) return;
-    setState(() => _isLoading = true);
-    try {
-      var data = await ApiService().getAllUsers(page: _page, search: _searchController.text);
-      List<User> newUsers = (data['users'] as List).map((e) => User.fromJson(e)).toList();
-      setState(() {
-        if (newUsers.isEmpty) {
-          _hasMore = false;
-        } else {
-          _users.addAll(newUsers);
-          _page++;
-        }
-      });
-    } catch (e) {
-      print(e);
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Explore')),
-      body: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.all(8),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(hintText: 'Search users...', prefixIcon: Icon(Icons.search), border: OutlineInputBorder()),
-            ),
-          ),
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              itemCount: _users.length + (_hasMore ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index == _users.length) {
-                  return Center(child: CircularProgressIndicator());
-                }
-                final user = _users[index];
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundImage: user.profileImage != null ? CachedNetworkImageProvider(ApiService.staticUrl + user.profileImage!) : null,
-                    child: user.profileImage == null ? Icon(Icons.person) : null,
-                  ),
-                  title: Row(children: [Text(user.username), BlueTick(isBlue: user.isBlue)]),
-                  subtitle: Text('Posts: ${user.postsCount} | Bookmarks: ${user.bookmarksCount}'),
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: user.id))),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// Profile Screen
-class ProfileScreen extends StatefulWidget {
-  final int userId;
-
-  const ProfileScreen({super.key, required this.userId});
-
-  @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
-}
-
-class _ProfileScreenState extends State<ProfileScreen> {
-  late Future<User> _userFuture;
-  final ApiService _api = ApiService();
-  List<Post> _userPosts = [];
-  int _postPage = 1;
-  bool _hasMorePosts = true;
-  bool _isLoadingPosts = false;
-  final ScrollController _scrollController = ScrollController();
-
-  @override
-  void initState() {
-    super.initState();
-    _userFuture = _api.getProfile(widget.userId);
-    _loadUserPosts();
-    _scrollController.addListener(_onScroll);
-  }
-
-  void _loadUserPosts({bool refresh = false}) async {
-    if (refresh) {
-      _postPage = 1;
-      _hasMorePosts = true;
-      _userPosts.clear();
-    }
-    if (_isLoadingPosts || !_hasMorePosts) return;
-    setState(() => _isLoadingPosts = true);
-    try {
-      var posts = await _api.getPosts(page: _postPage, perPage: 10);
-      // فیلتر پست‌های این کاربر (چون API همه پست‌ها را برمی‌گرداند)
-      posts = posts.where((p) => p.userId == widget.userId).toList();
-      if (posts.isEmpty) {
-        _hasMorePosts = false;
-      } else {
-        _userPosts.addAll(posts);
-        _postPage++;
-      }
-    } catch (e) {
-      print(e);
-    } finally {
-      setState(() => _isLoadingPosts = false);
-    }
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200 && !_isLoadingPosts && _hasMorePosts) {
-      _loadUserPosts();
-    }
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final auth = Provider.of<AuthProvider>(context);
-    final isCurrentUser = auth.currentUserId == widget.userId;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Profile'),
-        actions: [
-          if (isCurrentUser)
-            IconButton(icon: Icon(Icons.edit), onPressed: _editProfile),
-        ],
-      ),
-      body: FutureBuilder<User>(
-        future: _userFuture,
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return Center(child: CircularProgressIndicator());
-          }
-          final user = snapshot.data!;
-          return CustomScrollView(
-            controller: _scrollController,
-            slivers: [
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      CircleAvatar(
-                        radius: 50,
-                        backgroundImage: user.profileImage != null ? CachedNetworkImageProvider(ApiService.staticUrl + user.profileImage!) : null,
-                        child: user.profileImage == null ? Icon(Icons.person, size: 50) : null,
-                      ),
-                      SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(user.username, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                          BlueTick(isBlue: user.isBlue, size: 22),
-                        ],
-                      ),
-                      if (user.bio != null) Text(user.bio!, style: TextStyle(fontSize: 16)),
-                      SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _buildStatColumn('Posts', user.postsCount),
-                          _buildStatColumn('Bookmarks', user.bookmarksCount),
-                        ],
-                      ),
-                      Divider(),
-                    ],
-                  ),
-                ),
-              ),
-              SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    if (index == _userPosts.length) {
-                      return _hasMorePosts ? Center(child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator())) : null;
-                    }
-                    final post = _userPosts[index];
-                    return PostCard(post: post, userId: auth.currentUserId!);
-                  },
-                  childCount: _userPosts.length + (_hasMorePosts ? 1 : 0),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildStatColumn(String label, int count) {
+  Widget _buildSummaryItem(BuildContext context, String label, String value, Color color) {
     return Column(
       children: [
-        Text(count.toString(), style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-        Text(label, style: TextStyle(fontSize: 14, color: Colors.grey)),
+        Text(label, style: Theme.of(context).textTheme.bodyMedium),
+        SizedBox(height: 4),
+        Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
       ],
     );
   }
 
-  void _editProfile() async {
-    String? newBio;
-    File? newImage;
-    await showDialog(
+  String _getPersianName(String key) {
+    switch (key) {
+      case 'gold18': return 'طلای ۱۸ عیار';
+      case 'gold24': return 'طلای ۲۴ عیار';
+      case 'ons': return 'اونس جهانی';
+      case 'dollar': return 'دلار';
+      case 'sekke': return 'سکه تمام (امامی)';
+      case 'sekkenim': return 'نیم سکه';
+      case 'sekkerob': return 'ربع سکه';
+      case 'bahar': return 'سکه تمام (قدیم)';
+      default: return key;
+    }
+  }
+}
+
+class GoldListScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final priceProvider = Provider.of<PriceProvider>(context);
+    final dataProvider = Provider.of<DataProvider>(context);
+    final settings = Provider.of<SettingsProvider>(context);
+
+    final goldList = dataProvider.goldList;
+
+    // محاسبه مجموع وزن و ارزش
+    double totalWeight = 0;
+    double totalCurrentValue = 0;
+    double totalPaid = 0;
+    double totalProfit = 0;
+
+    for (var g in goldList) {
+      totalWeight += g.quantity;
+      final currentPrice = priceProvider.prices[g.type] ?? 0;
+      totalCurrentValue += currentPrice * g.quantity;
+      totalPaid += g.purchasePricePerUnit * g.quantity;
+
+      int days = Calculator.daysBetween(g.purchaseDate, DateTime.now());
+      double profit = Calculator.calculateProfit(
+        currentPrice: currentPrice,
+        purchasePrice: g.purchasePricePerUnit,
+        quantity: g.quantity,
+        paidAmount: g.purchasePricePerUnit * g.quantity,
+        interestRate: settings.bankInterestRate,
+        days: days,
+      );
+      totalProfit += profit;
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('طلای آب شده'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.add),
+            onPressed: () => _showAddEditGoldDialog(context, null),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Card(
+            margin: EdgeInsets.all(8),
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildSummaryChip('وزن کل', '${totalWeight.toStringAsFixed(3)} گرم'),
+                  _buildSummaryChip('ارزش کل', NumberFormat('#,###').format(totalCurrentValue)),
+                  _buildSummaryChip('سود کل', NumberFormat('#,###').format(totalProfit), color: totalProfit >= 0 ? Colors.green : Colors.red),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: goldList.length,
+              itemBuilder: (ctx, index) {
+                final g = goldList[index];
+                final currentPrice = priceProvider.prices[g.type] ?? 0;
+                final paid = g.purchasePricePerUnit * g.quantity;
+                final currentValue = currentPrice * g.quantity;
+                final days = Calculator.daysBetween(g.purchaseDate, DateTime.now());
+                final profit = Calculator.calculateProfit(
+                  currentPrice: currentPrice,
+                  purchasePrice: g.purchasePricePerUnit,
+                  quantity: g.quantity,
+                  paidAmount: paid,
+                  interestRate: settings.bankInterestRate,
+                  days: days,
+                );
+
+                return Card(
+                  margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: ListTile(
+                    title: Text('${g.quantity} گرم - خرید در ${DateFormat.yMd().format(g.purchaseDate)}'),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('فی خرید: ${NumberFormat('#,###').format(g.purchasePricePerUnit)}'),
+                        Text('ارزش فعلی: ${NumberFormat('#,###').format(currentValue)}'),
+                        Text('سود خالص: ${NumberFormat('#,###').format(profit)} (${profit >= 0 ? '+' : ''}${profit.toStringAsFixed(0)})',
+                            style: TextStyle(color: profit >= 0 ? Colors.green : Colors.red)),
+                      ],
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.edit, size: 20),
+                          onPressed: () => _showAddEditGoldDialog(context, g),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.delete, size: 20, color: Colors.red),
+                          onPressed: () => dataProvider.deleteGold(g),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryChip(String label, String value, {Color color = Colors.black}) {
+    return Column(
+      children: [
+        Text(label, style: TextStyle(fontSize: 12)),
+        SizedBox(height: 4),
+        Text(value, style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+      ],
+    );
+  }
+
+  void _showAddEditGoldDialog(BuildContext context, GoldTransaction? existing) {
+    final formKey = GlobalKey<FormState>();
+    DateTime selectedDate = existing?.purchaseDate ?? DateTime.now();
+    double price = existing?.purchasePricePerUnit ?? 0;
+    double weight = existing?.quantity ?? 0;
+    String desc = existing?.description ?? '';
+
+    showDialog(
       context: context,
-      builder: (context) {
-        TextEditingController bioController = TextEditingController(text: context.read<AuthProvider>().currentUser?.bio);
+      builder: (ctx) {
         return AlertDialog(
-          title: Text('Edit Profile'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              GestureDetector(
-                onTap: () async {
-                  final picker = ImagePicker();
-                  final picked = await picker.pickImage(source: ImageSource.gallery);
-                  if (picked != null) newImage = File(picked.path);
-                },
-                child: CircleAvatar(
-                  radius: 40,
-                  backgroundImage: _getProfileImage(context, newImage),
-                  child: Icon(Icons.camera_alt),
-                ),
+          title: Text(existing == null ? 'افزودن طلای آب شده' : 'ویرایش'),
+          content: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  TextFormField(
+                    initialValue: price.toString(),
+                    decoration: InputDecoration(labelText: 'فی خرید (تومان)'),
+                    keyboardType: TextInputType.number,
+                    validator: (v) => v!.isEmpty ? 'لطفاً وارد کنید' : null,
+                    onSaved: (v) => price = double.parse(v!),
+                  ),
+                  TextFormField(
+                    initialValue: weight.toString(),
+                    decoration: InputDecoration(labelText: 'وزن (گرم)'),
+                    keyboardType: TextInputType.number,
+                    validator: (v) => v!.isEmpty ? 'لطفاً وارد کنید' : null,
+                    onSaved: (v) => weight = double.parse(v!),
+                  ),
+                  ListTile(
+                    title: Text('تاریخ خرید: ${DateFormat.yMd().format(selectedDate)}'),
+                    trailing: Icon(Icons.calendar_today),
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: selectedDate,
+                        firstDate: DateTime(2000),
+                        lastDate: DateTime.now(),
+                      );
+                      if (date != null) selectedDate = date;
+                    },
+                  ),
+                  TextFormField(
+                    initialValue: desc,
+                    decoration: InputDecoration(labelText: 'توضیحات'),
+                    onSaved: (v) => desc = v ?? '',
+                  ),
+                ],
               ),
-              TextField(
-                controller: bioController,
-                decoration: InputDecoration(labelText: 'Bio'),
-                maxLines: 3,
-              ),
-            ],
+            ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel')),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                try {
-                  await context.read<AuthProvider>().updateProfile(bioController.text, newImage);
-                  setState(() {
-                    _userFuture = _api.getProfile(widget.userId);
-                  });
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text('لغو')),
+            ElevatedButton(
+              onPressed: () {
+                if (formKey.currentState!.validate()) {
+                  formKey.currentState!.save();
+                  final newTrans = GoldTransaction(
+                    id: existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+                    type: 'gold18',
+                    purchaseDate: selectedDate,
+                    purchasePricePerUnit: price,
+                    quantity: weight,
+                    description: desc,
+                    isGold: true,
+                  );
+                  if (existing == null) {
+                    Provider.of<DataProvider>(context, listen: false).addGold(newTrans);
+                  } else {
+                    existing.purchaseDate = selectedDate;
+                    existing.purchasePricePerUnit = price;
+                    existing.quantity = weight;
+                    existing.description = desc;
+                    Provider.of<DataProvider>(context, listen: false).updateGold(existing);
+                  }
+                  Navigator.pop(ctx);
                 }
               },
-              child: Text('Save'),
+              child: Text('ذخیره'),
             ),
           ],
         );
       },
     );
   }
-
-  ImageProvider? _getProfileImage(BuildContext context, File? newImage) {
-    if (newImage != null) return FileImage(newImage);
-    final currentUser = context.read<AuthProvider>().currentUser;
-    if (currentUser?.profileImage != null) {
-      return CachedNetworkImageProvider(ApiService.staticUrl + currentUser!.profileImage!);
-    }
-    return null;
-  }
 }
 
-// Post Upload
-class PostUploadScreen extends StatefulWidget {
+class CoinListScreen extends StatelessWidget {
   @override
-  State<PostUploadScreen> createState() => _PostUploadScreenState();
-}
+  Widget build(BuildContext context) {
+    final priceProvider = Provider.of<PriceProvider>(context);
+    final dataProvider = Provider.of<DataProvider>(context);
+    final settings = Provider.of<SettingsProvider>(context);
 
-class _PostUploadScreenState extends State<PostUploadScreen> {
-  final TextEditingController _captionController = TextEditingController();
-  File? _mediaFile;
-  final ImagePicker _picker = ImagePicker();
-  String? _mediaType; // image, video, audio, file
+    final coinList = dataProvider.coinList;
 
-  Future<void> _pickMedia() async {
-    showModalBottomSheet(
-      context: context,
-      builder: (_) => Wrap(
+    // محاسبه مجموع
+    int totalCount = 0;
+    double totalCurrentValue = 0;
+    double totalPaid = 0;
+    double totalProfit = 0;
+
+    for (var c in coinList) {
+      totalCount += c.count;
+      final currentPrice = priceProvider.prices[c.coinType] ?? 0;
+      totalCurrentValue += currentPrice * c.count;
+      totalPaid += c.purchasePricePerUnit * c.count;
+
+      int days = Calculator.daysBetween(c.purchaseDate, DateTime.now());
+      double profit = Calculator.calculateProfit(
+        currentPrice: currentPrice,
+        purchasePrice: c.purchasePricePerUnit,
+        quantity: c.count.toDouble(),
+        paidAmount: c.purchasePricePerUnit * c.count,
+        interestRate: settings.bankInterestRate,
+        days: days,
+      );
+      totalProfit += profit;
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('سکه‌ها'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.add),
+            onPressed: () => _showAddEditCoinDialog(context, null),
+          ),
+        ],
+      ),
+      body: Column(
         children: [
-          ListTile(leading: Icon(Icons.image), title: Text('Image'), onTap: () async {
-            final picked = await _picker.pickImage(source: ImageSource.gallery);
-            if (picked != null) setState(() {
-              _mediaFile = File(picked.path);
-              _mediaType = 'image';
-            });
-            Navigator.pop(context);
-          }),
-          ListTile(leading: Icon(Icons.video_library), title: Text('Video'), onTap: () async {
-            final picked = await _picker.pickVideo(source: ImageSource.gallery);
-            if (picked != null) setState(() {
-              _mediaFile = File(picked.path);
-              _mediaType = 'video';
-            });
-            Navigator.pop(context);
-          }),
-          ListTile(leading: Icon(Icons.audiotrack), title: Text('Audio'), onTap: () async {
-            // انتخاب فایل صوتی از دستگاه
-            // برای سادگی، اینجا فقط یک نمونه
-          }),
-          ListTile(leading: Icon(Icons.insert_drive_file), title: Text('File'), onTap: () async {
-            // انتخاب فایل
-          }),
+          Card(
+            margin: EdgeInsets.all(8),
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildSummaryChip('تعداد کل', '$totalCount'),
+                  _buildSummaryChip('ارزش کل', NumberFormat('#,###').format(totalCurrentValue)),
+                  _buildSummaryChip('سود کل', NumberFormat('#,###').format(totalProfit), color: totalProfit >= 0 ? Colors.green : Colors.red),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: coinList.length,
+              itemBuilder: (ctx, index) {
+                final c = coinList[index];
+                final currentPrice = priceProvider.prices[c.coinType] ?? 0;
+                final paid = c.purchasePricePerUnit * c.count;
+                final currentValue = currentPrice * c.count;
+                final days = Calculator.daysBetween(c.purchaseDate, DateTime.now());
+                final profit = Calculator.calculateProfit(
+                  currentPrice: currentPrice,
+                  purchasePrice: c.purchasePricePerUnit,
+                  quantity: c.count.toDouble(),
+                  paidAmount: paid,
+                  interestRate: settings.bankInterestRate,
+                  days: days,
+                );
+
+                return Card(
+                  margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: ListTile(
+                    title: Text('${c.count} ${_getCoinName(c.coinType)} - خرید در ${DateFormat.yMd().format(c.purchaseDate)}'),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('فی خرید: ${NumberFormat('#,###').format(c.purchasePricePerUnit)}'),
+                        Text('ارزش فعلی: ${NumberFormat('#,###').format(currentValue)}'),
+                        Text('سود خالص: ${NumberFormat('#,###').format(profit)} (${profit >= 0 ? '+' : ''}${profit.toStringAsFixed(0)})',
+                            style: TextStyle(color: profit >= 0 ? Colors.green : Colors.red)),
+                        if (c.description.isNotEmpty) Text(c.description, style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      ],
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.edit, size: 20),
+                          onPressed: () => _showAddEditCoinDialog(context, c),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.delete, size: 20, color: Colors.red),
+                          onPressed: () => dataProvider.deleteCoin(c),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Future<void> _submit() async {
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    try {
-      await ApiService().uploadPost(auth.currentUserId!, _captionController.text, _mediaFile);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Post uploaded')));
-      _captionController.clear();
-      setState(() {
-        _mediaFile = null;
-        _mediaType = null;
-      });
-      // به روزرسانی فید
-      context.read<PostsProvider>().loadPosts(refresh: true);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+  String _getCoinName(String type) {
+    switch (type) {
+      case 'sekke': return 'سکه تمام (امامی)';
+      case 'bahar': return 'سکه تمام (قدیم)';
+      case 'sekkenim': return 'نیم سکه';
+      case 'sekkerob': return 'ربع سکه';
+      default: return type;
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('New Post')),
-      body: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-              controller: _captionController,
-              decoration: InputDecoration(hintText: 'Caption...'),
-              maxLines: 3,
-            ),
-            SizedBox(height: 16),
-            if (_mediaFile != null && _mediaType != null)
-              Container(
-                height: 200,
-                child: _mediaType == 'image'
-                    ? Image.file(_mediaFile!, fit: BoxFit.cover)
-                    : _mediaType == 'video'
-                        ? Center(child: Icon(Icons.video_library, size: 50))
-                        : Center(child: Icon(Icons.attach_file, size: 50)),
+  Widget _buildSummaryChip(String label, String value, {Color color = Colors.black}) {
+    return Column(
+      children: [
+        Text(label, style: TextStyle(fontSize: 12)),
+        SizedBox(height: 4),
+        Text(value, style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+      ],
+    );
+  }
+
+  void _showAddEditCoinDialog(BuildContext context, CoinTransaction? existing) {
+    final formKey = GlobalKey<FormState>();
+    DateTime selectedDate = existing?.purchaseDate ?? DateTime.now();
+    double price = existing?.purchasePricePerUnit ?? 0;
+    int count = existing?.count ?? 1;
+    String desc = existing?.description ?? '';
+    String coinType = existing?.coinType ?? 'sekke';
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(existing == null ? 'افزودن سکه' : 'ویرایش'),
+          content: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: coinType,
+                    items: [
+                      DropdownMenuItem(value: 'sekke', child: Text('تمام (امامی)')),
+                      DropdownMenuItem(value: 'bahar', child: Text('تمام (قدیم)')),
+                      DropdownMenuItem(value: 'sekkenim', child: Text('نیم سکه')),
+                      DropdownMenuItem(value: 'sekkerob', child: Text('ربع سکه')),
+                    ],
+                    onChanged: (v) => coinType = v!,
+                    decoration: InputDecoration(labelText: 'نوع سکه'),
+                  ),
+                  TextFormField(
+                    initialValue: price.toString(),
+                    decoration: InputDecoration(labelText: 'فی خرید (تومان)'),
+                    keyboardType: TextInputType.number,
+                    validator: (v) => v!.isEmpty ? 'لطفاً وارد کنید' : null,
+                    onSaved: (v) => price = double.parse(v!),
+                  ),
+                  TextFormField(
+                    initialValue: count.toString(),
+                    decoration: InputDecoration(labelText: 'تعداد'),
+                    keyboardType: TextInputType.number,
+                    validator: (v) => v!.isEmpty ? 'لطفاً وارد کنید' : null,
+                    onSaved: (v) => count = int.parse(v!),
+                  ),
+                  ListTile(
+                    title: Text('تاریخ خرید: ${DateFormat.yMd().format(selectedDate)}'),
+                    trailing: Icon(Icons.calendar_today),
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: selectedDate,
+                        firstDate: DateTime(2000),
+                        lastDate: DateTime.now(),
+                      );
+                      if (date != null) selectedDate = date;
+                    },
+                  ),
+                  TextFormField(
+                    initialValue: desc,
+                    decoration: InputDecoration(labelText: 'توضیحات'),
+                    onSaved: (v) => desc = v ?? '',
+                  ),
+                ],
               ),
-            ElevatedButton(
-              onPressed: _pickMedia,
-              child: Text('Attach Media'),
             ),
-            SizedBox(height: 16),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text('لغو')),
             ElevatedButton(
-              onPressed: _submit,
-              child: Text('Post'),
-              style: ElevatedButton.styleFrom(minimumSize: Size(double.infinity, 50)),
+              onPressed: () {
+                if (formKey.currentState!.validate()) {
+                  formKey.currentState!.save();
+                  final newTrans = CoinTransaction(
+                    id: existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+                    coinType: coinType,
+                    purchaseDate: selectedDate,
+                    purchasePricePerUnit: price,
+                    count: count,
+                    description: desc,
+                  );
+                  if (existing == null) {
+                    Provider.of<DataProvider>(context, listen: false).addCoin(newTrans);
+                  } else {
+                    existing.coinType = coinType;
+                    existing.purchaseDate = selectedDate;
+                    existing.purchasePricePerUnit = price;
+                    existing.count = count;
+                    existing.description = desc;
+                    Provider.of<DataProvider>(context, listen: false).updateCoin(existing);
+                  }
+                  Navigator.pop(ctx);
+                }
+              },
+              child: Text('ذخیره'),
             ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 }
 
-// Bookmarks Screen
-class BookmarksScreen extends StatefulWidget {
-  @override
-  State<BookmarksScreen> createState() => _BookmarksScreenState();
-}
-
-class _BookmarksScreenState extends State<BookmarksScreen> {
-  final ScrollController _scrollController = ScrollController();
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final userId = context.read<AuthProvider>().currentUserId!;
-      context.read<BookmarksProvider>().loadBookmarks(userId, refresh: true);
-    });
-    _scrollController.addListener(_onScroll);
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-      final userId = context.read<AuthProvider>().currentUserId!;
-      context.read<BookmarksProvider>().loadBookmarks(userId);
-    }
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
+class ChartsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final auth = Provider.of<AuthProvider>(context);
+    final priceProvider = Provider.of<PriceProvider>(context);
+    final dataProvider = Provider.of<DataProvider>(context);
+    final settings = Provider.of<SettingsProvider>(context);
+
+    final goldList = dataProvider.goldList;
+    final coinList = dataProvider.coinList;
+
+    // داده برای نمودار میله‌ای سود هر خرید (ترکیبی)
+    List<BarChartGroupData> barGroups = [];
+    int index = 0;
+    for (var g in goldList) {
+      final currentPrice = priceProvider.prices[g.type] ?? 0;
+      final paid = g.purchasePricePerUnit * g.quantity;
+      final days = Calculator.daysBetween(g.purchaseDate, DateTime.now());
+      final profit = Calculator.calculateProfit(
+        currentPrice: currentPrice,
+        purchasePrice: g.purchasePricePerUnit,
+        quantity: g.quantity,
+        paidAmount: paid,
+        interestRate: settings.bankInterestRate,
+        days: days,
+      );
+      barGroups.add(
+        BarChartGroupData(x: index++, barRods: [
+          BarChartRodData(toY: profit, color: profit >= 0 ? Colors.green : Colors.red, width: 10),
+        ]),
+      );
+    }
+    for (var c in coinList) {
+      final currentPrice = priceProvider.prices[c.coinType] ?? 0;
+      final paid = c.purchasePricePerUnit * c.count;
+      final days = Calculator.daysBetween(c.purchaseDate, DateTime.now());
+      final profit = Calculator.calculateProfit(
+        currentPrice: currentPrice,
+        purchasePrice: c.purchasePricePerUnit,
+        quantity: c.count.toDouble(),
+        paidAmount: paid,
+        interestRate: settings.bankInterestRate,
+        days: days,
+      );
+      barGroups.add(
+        BarChartGroupData(x: index++, barRods: [
+          BarChartRodData(toY: profit, color: profit >= 0 ? Colors.green : Colors.red, width: 10),
+        ]),
+      );
+    }
+
     return Scaffold(
-      appBar: AppBar(title: Text('Bookmarks')),
-      body: Consumer<BookmarksProvider>(
-        builder: (context, provider, child) {
-          if (provider.bookmarks.isEmpty && provider.isLoading) {
-            return Center(child: CircularProgressIndicator());
-          }
-          return ListView.builder(
-            controller: _scrollController,
-            itemCount: provider.bookmarks.length + (provider.hasMore ? 1 : 0),
-            itemBuilder: (context, index) {
-              if (index == provider.bookmarks.length) {
-                return Center(child: CircularProgressIndicator());
-              }
-              final post = provider.bookmarks[index];
-              return PostCard(post: post, userId: auth.currentUserId!);
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-// Direct Messages List
-class DirectMessagesScreen extends StatefulWidget {
-  @override
-  State<DirectMessagesScreen> createState() => _DirectMessagesScreenState();
-}
-
-class _DirectMessagesScreenState extends State<DirectMessagesScreen> {
-  List<User> _recentUsers = []; // لیست کاربرانی که با آنها پیام داشته‌اید
-  bool _isLoading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadRecentUsers();
-  }
-
-  Future<void> _loadRecentUsers() async {
-    // برای سادگی، همه کاربران را می‌آوریم و بر اساس آخرین پیام مرتب می‌کنیم
-    // در عمل باید از API خاصی استفاده کرد
-  }
-
-  void _startChat(int otherUserId) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(otherUserId: otherUserId)));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Direct Messages')),
-      body: FutureBuilder(
-        future: ApiService().getAllUsers(page: 1, perPage: 50),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return Center(child: CircularProgressIndicator());
-          }
-          List users = (snapshot.data!['users'] as List).map((e) => User.fromJson(e)).toList();
-          // فیلتر کردن خود کاربر
-          users.removeWhere((u) => u.id == context.read<AuthProvider>().currentUserId);
-          return ListView.builder(
-            itemCount: users.length,
-            itemBuilder: (context, index) {
-              final user = users[index];
-              return ListTile(
-                leading: CircleAvatar(
-                  backgroundImage: user.profileImage != null ? CachedNetworkImageProvider(ApiService.staticUrl + user.profileImage!) : null,
-                  child: user.profileImage == null ? Icon(Icons.person) : null,
-                ),
-                title: Row(children: [Text(user.username), BlueTick(isBlue: user.isBlue)]),
-                onTap: () => _startChat(user.id),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-// Chat Screen (Direct)
-class ChatScreen extends StatefulWidget {
-  final int otherUserId;
-
-  const ChatScreen({super.key, required this.otherUserId});
-
-  @override
-  State<ChatScreen> createState() => _ChatScreenState();
-}
-
-class _ChatScreenState extends State<ChatScreen> {
-  final TextEditingController _messageController = TextEditingController();
-  final List<DirectMessage> _messages = [];
-  int _page = 1;
-  bool _hasMore = true;
-  bool _isLoading = false;
-  final ScrollController _scrollController = ScrollController();
-  File? _mediaFile;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadMessages();
-    _scrollController.addListener(_onScroll);
-  }
-
-  Future<void> _loadMessages({bool refresh = false}) async {
-    if (refresh) {
-      _page = 1;
-      _hasMore = true;
-      _messages.clear();
-    }
-    if (_isLoading || !_hasMore) return;
-    setState(() => _isLoading = true);
-    try {
-      final userId = context.read<AuthProvider>().currentUserId!;
-      var newMessages = await ApiService().getDirectMessages(userId, widget.otherUserId, page: _page);
-      if (newMessages.isEmpty) {
-        _hasMore = false;
-      } else {
-        _messages.insertAll(0, newMessages.reversed);
-        _page++;
-      }
-    } catch (e) {
-      print(e);
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels <= 200 && !_isLoading && _hasMore) {
-      _loadMessages();
-    }
-  }
-
-  Future<void> _sendMessage() async {
-    if (_messageController.text.trim().isEmpty && _mediaFile == null) return;
-    try {
-      final userId = context.read<AuthProvider>().currentUserId!;
-      var result = await ApiService().sendDirectMessage(userId, widget.otherUserId, _messageController.text, _mediaFile);
-      _messageController.clear();
-      setState(() {
-        _mediaFile = null;
-      });
-      // افزودن پیام به لیست
-      _loadMessages(refresh: true);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-    }
-  }
-
-  Future<void> _pickMedia() async {
-    // مشابه قبل
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final currentUserId = context.read<AuthProvider>().currentUserId!;
-    return Scaffold(
-      appBar: AppBar(title: Text('Chat')),
-      body: Column(
+      appBar: AppBar(title: Text('نمودارها')),
+      body: ListView(
+        padding: EdgeInsets.all(16),
         children: [
-          Expanded(
-            child: ListView.builder(
-              reverse: true,
-              controller: _scrollController,
-              itemCount: _messages.length + (_isLoading ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index == 0 && _isLoading) {
-                  return Center(child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator()));
-                }
-                final msg = _messages[_messages.length - 1 - index];
-                final isMe = msg.senderId == currentUserId;
-                return Container(
-                  margin: EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-                  child: Row(
-                    mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                    children: [
-                      if (!isMe)
-                        CircleAvatar(
-                          radius: 16,
-                          backgroundImage: msg.senderProfileImage != null ? CachedNetworkImageProvider(ApiService.staticUrl + msg.senderProfileImage!) : null,
-                          child: msg.senderProfileImage == null ? Icon(Icons.person, size: 16) : null,
-                        ),
-                      SizedBox(width: 8),
-                      Flexible(
-                        child: Container(
-                          padding: EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: isMe ? Colors.blue : Colors.grey[300],
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (msg.content != null) Text(msg.content!),
-                              if (msg.mediaType != null)
-                                MediaDisplay(mediaType: msg.mediaType!, mediaPath: msg.mediaPath),
-                              Text(DateFormat.Hm().format(msg.createdAt), style: TextStyle(fontSize: 10, color: isMe ? Colors.white70 : Colors.black54)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
+          Text('نمودار سود/زیان هر خرید', style: Theme.of(context).textTheme.titleMedium),
+          SizedBox(height: 10),
+          Container(
+            height: 300,
+            child: BarChart(
+              BarChartData(
+                barGroups: barGroups,
+                titlesData: FlTitlesData(show: false),
+                borderData: FlBorderData(show: false),
+              ),
             ),
           ),
-          Padding(
-            padding: EdgeInsets.all(8),
-            child: Row(
-              children: [
-                IconButton(icon: Icon(Icons.attach_file), onPressed: _pickMedia),
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    decoration: InputDecoration(hintText: 'Message...', border: OutlineInputBorder()),
+          SizedBox(height: 20),
+          Text('نمودار تغییرات قیمت (نمونه)', style: Theme.of(context).textTheme.titleMedium),
+          SizedBox(height: 10),
+          Container(
+            height: 200,
+            child: LineChart(
+              LineChartData(
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: priceProvider.prices.entries.map((e) {
+                      return FlSpot(priceProvider.prices.keys.toList().indexOf(e.key).toDouble(), e.value / 1e6); // مقیاس
+                    }).toList(),
+                    isCurved: true,
+                    color: Colors.blue,
+                  ),
+                ],
+                titlesData: FlTitlesData(
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      getTitlesWidget: (value, meta) {
+                        int idx = value.toInt();
+                        if (idx >= 0 && idx < priceProvider.prices.length) {
+                          String key = priceProvider.prices.keys.elementAt(idx);
+                          return Text(_shortName(key), style: TextStyle(fontSize: 10));
+                        }
+                        return Text('');
+                      },
+                    ),
                   ),
                 ),
-                IconButton(onPressed: _sendMessage, icon: Icon(Icons.send)),
-              ],
+              ),
             ),
           ),
         ],
       ),
     );
   }
+
+  String _shortName(String key) {
+    switch (key) {
+      case 'gold18': return '18';
+      case 'gold24': return '24';
+      case 'ons': return 'اونس';
+      case 'dollar': return 'دلار';
+      case 'sekke': return 'تمام';
+      case 'sekkenim': return 'نیم';
+      case 'sekkerob': return 'ربع';
+      case 'bahar': return 'قدیم';
+      default: return '';
+    }
+  }
 }
 
-// Group Chat
-class GroupChatScreen extends StatefulWidget {
-  @override
-  State<GroupChatScreen> createState() => _GroupChatScreenState();
-}
-
-class _GroupChatScreenState extends State<GroupChatScreen> {
-  final TextEditingController _messageController = TextEditingController();
-  final List<GroupMessage> _messages = [];
-  int _page = 1;
-  bool _hasMore = true;
-  bool _isLoading = false;
-  final ScrollController _scrollController = ScrollController();
-  File? _mediaFile;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadMessages();
-    _scrollController.addListener(_onScroll);
-  }
-
-  Future<void> _loadMessages({bool refresh = false}) async {
-    if (refresh) {
-      _page = 1;
-      _hasMore = true;
-      _messages.clear();
-    }
-    if (_isLoading || !_hasMore) return;
-    setState(() => _isLoading = true);
-    try {
-      var newMessages = await ApiService().getGroupMessages(page: _page);
-      if (newMessages.isEmpty) {
-        _hasMore = false;
-      } else {
-        _messages.insertAll(0, newMessages.reversed);
-        _page++;
-      }
-    } catch (e) {
-      print(e);
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels <= 200 && !_isLoading && _hasMore) {
-      _loadMessages();
-    }
-  }
-
-  Future<void> _sendMessage() async {
-    if (_messageController.text.trim().isEmpty && _mediaFile == null) return;
-    try {
-      final userId = context.read<AuthProvider>().currentUserId!;
-      var result = await ApiService().sendGroupMessage(userId, _messageController.text, _mediaFile);
-      _messageController.clear();
-      setState(() {
-        _mediaFile = null;
-      });
-      _loadMessages(refresh: true);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-    }
-  }
-
-  Future<void> _pickMedia() async {
-    // مشابه قبل
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
+class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final currentUserId = context.read<AuthProvider>().currentUserId!;
+    final settings = Provider.of<SettingsProvider>(context);
+    final priceProvider = Provider.of<PriceProvider>(context);
+
     return Scaffold(
-      appBar: AppBar(title: Text('Group Chat')),
-      body: Column(
+      appBar: AppBar(title: Text('تنظیمات')),
+      body: ListView(
+        padding: EdgeInsets.all(16),
         children: [
-          Expanded(
-            child: ListView.builder(
-              reverse: true,
-              controller: _scrollController,
-              itemCount: _messages.length + (_isLoading ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index == 0 && _isLoading) {
-                  return Center(child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator()));
-                }
-                final msg = _messages[_messages.length - 1 - index];
-                final isMe = msg.senderId == currentUserId;
-                return Container(
-                  margin: EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-                  child: Row(
-                    mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                    children: [
-                      if (!isMe)
-                        CircleAvatar(
-                          radius: 16,
-                          backgroundImage: msg.senderProfileImage != null ? CachedNetworkImageProvider(ApiService.staticUrl + msg.senderProfileImage!) : null,
-                          child: msg.senderProfileImage == null ? Icon(Icons.person, size: 16) : null,
-                        ),
-                      SizedBox(width: 8),
-                      Flexible(
-                        child: Container(
-                          padding: EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: isMe ? Colors.blue : Colors.grey[300],
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (!isMe) ...[
-                                Row(
-                                  children: [
-                                    Text(msg.senderUsername, style: TextStyle(fontWeight: FontWeight.bold)),
-                                    BlueTick(isBlue: msg.senderIsBlue, size: 14),
-                                  ],
-                                ),
-                                SizedBox(height: 4),
-                              ],
-                              if (msg.content != null) Text(msg.content!),
-                              if (msg.mediaType != null)
-                                MediaDisplay(mediaType: msg.mediaType!, mediaPath: msg.mediaPath),
-                              Text(DateFormat.Hm().format(msg.createdAt), style: TextStyle(fontSize: 10, color: isMe ? Colors.white70 : Colors.black54)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+          Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Text('نرخ سود بانکی', style: Theme.of(context).textTheme.titleSmall),
+                  Slider(
+                    value: settings.bankInterestRate,
+                    min: 0,
+                    max: 50,
+                    divisions: 100,
+                    label: settings.bankInterestRate.toStringAsFixed(1) + '%',
+                    onChanged: (v) => settings.setBankInterestRate(v),
                   ),
-                );
-              },
+                  Text('${settings.bankInterestRate.toStringAsFixed(1)}%'),
+                ],
+              ),
             ),
           ),
-          Padding(
-            padding: EdgeInsets.all(8),
-            child: Row(
-              children: [
-                IconButton(icon: Icon(Icons.attach_file), onPressed: _pickMedia),
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    decoration: InputDecoration(hintText: 'Message...', border: OutlineInputBorder()),
+          Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Text('فاصله به‌روزرسانی خودکار (ثانیه)', style: Theme.of(context).textTheme.titleSmall),
+                  Slider(
+                    value: settings.autoUpdateInterval.toDouble(),
+                    min: 60,
+                    max: 3600,
+                    divisions: 59,
+                    label: settings.autoUpdateInterval.toString(),
+                    onChanged: (v) {
+                      settings.setAutoUpdateInterval(v.toInt());
+                      priceProvider.setAutoUpdateInterval(v.toInt());
+                    },
                   ),
-                ),
-                IconButton(onPressed: _sendMessage, icon: Icon(Icons.send)),
-              ],
+                  Text('${settings.autoUpdateInterval} ثانیه'),
+                ],
+              ),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              title: Text('به‌روزرسانی دستی قیمت‌ها'),
+              trailing: Icon(Icons.refresh),
+              onTap: () => priceProvider.fetchPrices(),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              title: Text('نسخه ۱.۰.۰'),
+              subtitle: Text('طراحی شده با فلاتر'),
             ),
           ),
         ],
@@ -2283,38 +1188,68 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 // -------------------- Main App --------------------
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Hive initialization
+  final appDocumentDir = await path_provider.getApplicationDocumentsDirectory();
+  Hive.init(appDocumentDir.path);
+  Hive.registerAdapter(GoldTransactionAdapter());
+  Hive.registerAdapter(CoinTransactionAdapter());
+
+  final goldBox = await Hive.openBox<GoldTransaction>('goldTransactions');
+  final coinBox = await Hive.openBox<CoinTransaction>('coinTransactions');
   final prefs = await SharedPreferences.getInstance();
-  runApp(MyApp(prefs: prefs));
+
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => PriceProvider()),
+        ChangeNotifierProvider(create: (_) => SettingsProvider(prefs)),
+        ChangeNotifierProvider(create: (_) => DataProvider(goldBox: goldBox, coinBox: coinBox)),
+      ],
+      child: MaterialApp(
+        title: 'مدیریت دارایی طلا و سکه',
+        theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
+          fontFamily: 'Vazir', // در صورت وجود فونت
+        ),
+        home: MainScreen(),
+        debugShowCheckedModeBanner: false,
+      ),
+    ),
+  );
 }
 
-class MyApp extends StatelessWidget {
-  final SharedPreferences prefs;
+class MainScreen extends StatefulWidget {
+  @override
+  _MainScreenState createState() => _MainScreenState();
+}
 
-  const MyApp({super.key, required this.prefs});
+class _MainScreenState extends State<MainScreen> {
+  int _selectedIndex = 0;
+
+  final List<Widget> _screens = [
+    HomeScreen(),
+    GoldListScreen(),
+    CoinListScreen(),
+    ChartsScreen(),
+    SettingsScreen(),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => AuthProvider(prefs)),
-        ChangeNotifierProvider(create: (_) => PostsProvider()),
-        ChangeNotifierProvider(create: (_) => BookmarksProvider()),
-      ],
-      child: MaterialApp(
-        title: 'Tweeter App',
-        theme: ThemeData(
-          primarySwatch: Colors.blue,
-          visualDensity: VisualDensity.adaptivePlatformDensity,
-        ),
-        home: Consumer<AuthProvider>(
-          builder: (context, auth, child) {
-            if (auth.isLoggedIn) {
-              return MainScreen();
-            } else {
-              return AuthScreen();
-            }
-          },
-        ),
+    return Scaffold(
+      body: _screens[_selectedIndex],
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+        destinations: [
+          NavigationDestination(icon: Icon(Icons.home), label: 'خانه'),
+          NavigationDestination(icon: Icon(Icons.monetization_on), label: 'طلای آب شده'),
+          NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: 'سکه'),
+          NavigationDestination(icon: Icon(Icons.bar_chart), label: 'نمودارها'),
+          NavigationDestination(icon: Icon(Icons.settings), label: 'تنظیمات'),
+        ],
       ),
     );
   }
