@@ -1105,15 +1105,25 @@ class ChartsScreen extends StatelessWidget {
     final goldList = dataProvider.goldList;
     final coinList = dataProvider.coinList;
 
-    // محاسبه مجموع ارزش طلا و سکه برای نمودار دایره‌ای
+    // محاسبه ارزش طلا
     double totalGoldValue = 0;
-    double totalCoinValue = 0;
     for (var g in goldList) {
       totalGoldValue += (priceProvider.prices[g.type] ?? 0) * g.quantity;
     }
+
+    // محاسبه ارزش سکه به تفکیک
+    double totalCoinRob = 0;
+    double totalCoinNim = 0;
+    double totalCoinTamam = 0;
     for (var c in coinList) {
-      totalCoinValue += (priceProvider.prices[c.coinType] ?? 0) * c.count;
+      final currentPrice = priceProvider.prices[c.coinType] ?? 0;
+      final value = currentPrice * c.count;
+      if (c.coinType == 'sekkerob') totalCoinRob += value;
+      else if (c.coinType == 'sekkenim') totalCoinNim += value;
+      else if (c.coinType == 'sekke' || c.coinType == 'bahar') totalCoinTamam += value;
     }
+
+    final totalAssets = totalGoldValue + totalCoinRob + totalCoinNim + totalCoinTamam;
 
     // داده برای نمودار میله‌ای سود هر خرید (ترکیبی)
     List<BarChartGroupData> barGroups = [];
@@ -1155,37 +1165,45 @@ class ChartsScreen extends StatelessWidget {
       );
     }
 
+    // داده برای نمودار خطی قیمت‌های نسبی
+    final priceEntries = priceProvider.prices.entries.toList();
+    final maxPrice = priceEntries.map((e) => e.value).fold(0.0, max);
+    final lineBarsData = priceEntries.map((entry) {
+      return LineChartBarData(
+        spots: [FlSpot(priceEntries.indexOf(entry).toDouble(), entry.value / maxPrice)],
+        isCurved: true,
+        color: _getColorForItem(entry.key),
+        barWidth: 2,
+        isStrokeCapRound: true,
+        dotData: FlDotData(show: false),
+        belowBarData: BarAreaData(show: false),
+      );
+    }).toList();
+
     return Scaffold(
       appBar: AppBar(title: Text('نمودارها'), centerTitle: true),
       body: ListView(
         padding: EdgeInsets.all(16),
         children: [
+          // نمودار دایره‌ای توزیع دارایی
           Text('نمودار توزیع دارایی', style: Theme.of(context).textTheme.titleMedium),
           SizedBox(height: 10),
           Container(
-            height: 200,
+            height: 250,
             child: PieChart(
               PieChartData(
-                sections: [
-                  PieChartSectionData(
-                    value: totalGoldValue,
-                    title: 'طلای آب شده',
-                    color: Colors.amber,
-                    radius: 50,
-                  ),
-                  PieChartSectionData(
-                    value: totalCoinValue,
-                    title: 'سکه',
-                    color: Colors.blue,
-                    radius: 50,
-                  ),
-                ],
+                sections: _buildPieSections(totalGoldValue, totalCoinRob, totalCoinNim, totalCoinTamam, totalAssets),
                 sectionsSpace: 2,
                 centerSpaceRadius: 40,
+                pieTouchData: PieTouchData(
+                  touchCallback: (FlTouchEvent event, pieTouchResponse) {},
+                ),
               ),
             ),
           ),
           SizedBox(height: 20),
+
+          // نمودار میله‌ای سود هر خرید
           Text('نمودار سود/زیان هر خرید', style: Theme.of(context).textTheme.titleMedium),
           SizedBox(height: 10),
           Container(
@@ -1195,46 +1213,106 @@ class ChartsScreen extends StatelessWidget {
                 barGroups: barGroups,
                 titlesData: FlTitlesData(show: false),
                 borderData: FlBorderData(show: false),
+                gridData: FlGridData(show: false),
               ),
             ),
           ),
           SizedBox(height: 20),
-          Text('نمودار تغییرات قیمت (نمونه)', style: Theme.of(context).textTheme.titleMedium),
+
+          // نمودار خطی قیمت‌های نسبی
+          Text('نمودار تغییرات نسبی قیمت‌ها', style: Theme.of(context).textTheme.titleMedium),
           SizedBox(height: 10),
           Container(
             height: 200,
             child: LineChart(
               LineChartData(
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: priceProvider.prices.entries.map((e) {
-                      return FlSpot(priceProvider.prices.keys.toList().indexOf(e.key).toDouble(), e.value / 1e6); // مقیاس
-                    }).toList(),
-                    isCurved: true,
-                    color: Colors.blue,
-                  ),
-                ],
+                lineBarsData: lineBarsData,
                 titlesData: FlTitlesData(
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
                       getTitlesWidget: (value, meta) {
                         int idx = value.toInt();
-                        if (idx >= 0 && idx < priceProvider.prices.length) {
-                          String key = priceProvider.prices.keys.elementAt(idx);
-                          return Text(_shortName(key), style: TextStyle(fontSize: 10));
+                        if (idx >= 0 && idx < priceEntries.length) {
+                          return Text(_shortName(priceEntries[idx].key), style: TextStyle(fontSize: 10));
                         }
                         return Text('');
                       },
                     ),
                   ),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                 ),
+                borderData: FlBorderData(show: false),
+                gridData: FlGridData(show: false),
               ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  List<PieChartSectionData> _buildPieSections(
+      double gold, double rob, double nim, double tamam, double total) {
+    List<PieChartSectionData> sections = [];
+    if (gold > 0) {
+      sections.add(PieChartSectionData(
+        value: gold,
+        title: 'طلای آب شده\n${((gold / total) * 100).toStringAsFixed(1)}%',
+        color: Colors.amber,
+        radius: 50,
+      ));
+    }
+    if (rob > 0) {
+      sections.add(PieChartSectionData(
+        value: rob,
+        title: 'ربع سکه\n${((rob / total) * 100).toStringAsFixed(1)}%',
+        color: Colors.blue,
+        radius: 50,
+      ));
+    }
+    if (nim > 0) {
+      sections.add(PieChartSectionData(
+        value: nim,
+        title: 'نیم سکه\n${((nim / total) * 100).toStringAsFixed(1)}%',
+        color: Colors.green,
+        radius: 50,
+      ));
+    }
+    if (tamam > 0) {
+      sections.add(PieChartSectionData(
+        value: tamam,
+        title: 'تمام سکه\n${((tamam / total) * 100).toStringAsFixed(1)}%',
+        color: Colors.purple,
+        radius: 50,
+      ));
+    }
+    return sections;
+  }
+
+  Color _getColorForItem(String key) {
+    switch (key) {
+      case 'gold18':
+        return Colors.amber;
+      case 'gold24':
+        return Colors.orange;
+      case 'ons':
+        return Colors.yellow;
+      case 'dollar':
+        return Colors.green;
+      case 'sekke':
+        return Colors.blue;
+      case 'bahar':
+        return Colors.indigo;
+      case 'sekkenim':
+        return Colors.purple;
+      case 'sekkerob':
+        return Colors.pink;
+      default:
+        return Colors.grey;
+    }
   }
 
   String _shortName(String key) {
