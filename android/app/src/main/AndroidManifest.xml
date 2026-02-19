@@ -7,8 +7,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <application
-        android:label="testingtheflutter"
-        android:name="${applicationName}"
+        android:label="طلا و سکه"
+        android:name="طلا و سکه"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
