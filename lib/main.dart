@@ -55,8 +55,8 @@ class Post {
   final String username;
   final String? userProfileImage;
   final bool userIsBlue;
-  final String? caption;
-  final String mediaType; // text, image, video, audio, file
+  String? caption; // changed from final to allow editing
+  final String mediaType;
   final String? mediaPath;
   final String? thumbnailPath;
   final DateTime createdAt;
@@ -1701,7 +1701,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 },
                 child: CircleAvatar(
                   radius: 40,
-                  backgroundImage: newImage != null ? FileImage(newImage!) : (context.read<AuthProvider>().currentUser?.profileImage != null ? CachedNetworkImageProvider(ApiService.staticUrl + context.read<AuthProvider>().currentUser!.profileImage!) : null),
+                  backgroundImage: _getProfileImage(context, newImage),
                   child: Icon(Icons.camera_alt),
                 ),
               ),
@@ -1732,6 +1732,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       },
     );
+  }
+
+  ImageProvider? _getProfileImage(BuildContext context, File? newImage) {
+    if (newImage != null) return FileImage(newImage);
+    final currentUser = context.read<AuthProvider>().currentUser;
+    if (currentUser?.profileImage != null) {
+      return CachedNetworkImageProvider(ApiService.staticUrl + currentUser!.profileImage!);
+    }
+    return null;
   }
 }
 
@@ -1814,7 +1823,11 @@ class _PostUploadScreenState extends State<PostUploadScreen> {
             if (_mediaFile != null && _mediaType != null)
               Container(
                 height: 200,
-                child: MediaDisplay(mediaType: _mediaType!, mediaPath: _mediaFile!.path), // اینجا مسیر لوکال است، برای نمایش استفاده می‌کنیم
+                child: _mediaType == 'image'
+                    ? Image.file(_mediaFile!, fit: BoxFit.cover)
+                    : _mediaType == 'video'
+                        ? Center(child: Icon(Icons.video_library, size: 50))
+                        : Center(child: Icon(Icons.attach_file, size: 50)),
               ),
             ElevatedButton(
               onPressed: _pickMedia,
