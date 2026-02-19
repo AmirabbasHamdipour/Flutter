@@ -71,7 +71,7 @@ class CoinTransaction extends HiveObject {
 
 // -------------------- API Service --------------------
 class ApiService {
-  static const String baseUrl = 'https://amirsoft.onrender.com/price/';
+  static const String baseUrl = 'https://tweeter.runflare.run/price/';
 
   static Future<double?> fetchPrice(String obj) async {
     try {
