@@ -100,15 +100,44 @@ class ApiService {
 // -------------------- Providers --------------------
 class PriceProvider extends ChangeNotifier {
   Map<String, double> _prices = {};
-  DateTime _lastUpdated = DateTime.now();
+  Map<String, double> _lastSavedPrices = {};
+  DateTime _lastUpdated = DateTime(2000); // تاریخ پیش‌فرض قدیمی
   Timer? _timer;
+  final SharedPreferences _prefs;
+
+  static const List<String> _priceKeys = ['gold18', 'gold24', 'ons', 'dollar', 'sekke', 'sekkenim', 'sekkerob', 'bahar'];
 
   Map<String, double> get prices => UnmodifiableMapView(_prices);
   DateTime get lastUpdated => _lastUpdated;
 
-  PriceProvider() {
+  PriceProvider(this._prefs) {
+    _loadSavedPrices();
     fetchPrices();
     startAutoUpdate();
+  }
+
+  void _loadSavedPrices() {
+    _lastSavedPrices = {};
+    for (var key in _priceKeys) {
+      double? value = _prefs.getDouble('price_$key');
+      if (value != null) {
+        _lastSavedPrices[key] = value;
+      }
+    }
+    if (_lastSavedPrices.isNotEmpty) {
+      _prices = Map.from(_lastSavedPrices);
+      int? savedTime = _prefs.getInt('last_update');
+      if (savedTime != null) {
+        _lastUpdated = DateTime.fromMillisecondsSinceEpoch(savedTime);
+      }
+    }
+  }
+
+  Future<void> _savePrices(Map<String, double> prices) async {
+    for (var entry in prices.entries) {
+      await _prefs.setDouble('price_${entry.key}', entry.value);
+    }
+    await _prefs.setInt('last_update', DateTime.now().millisecondsSinceEpoch);
   }
 
   void startAutoUpdate({int intervalSeconds = 300}) {
@@ -124,9 +153,15 @@ class PriceProvider extends ChangeNotifier {
     final newPrices = await ApiService.fetchAllPrices();
     if (newPrices.isNotEmpty) {
       _prices = newPrices;
+      _lastSavedPrices = Map.from(newPrices);
       _lastUpdated = DateTime.now();
+      await _savePrices(newPrices);
       notifyListeners();
+    } else if (_lastSavedPrices.isNotEmpty) {
+      // اگر نتواستیم دریافت کنیم، مقادیر قبلی را نمایش می‌دهیم (هم‌اکنون در _prices هستند)
+      // فقط اطلاع‌رسانی می‌کنیم تا زمان به‌روزرسانی تغییر نکند
     }
+    notifyListeners();
   }
 
   @override
@@ -406,30 +441,48 @@ class HomeScreen extends StatelessWidget {
     final dataProvider = Provider.of<DataProvider>(context);
     final settings = Provider.of<SettingsProvider>(context);
 
-    final goldList = dataProvider.goldList;
-    final coinList = dataProvider.coinList;
-
-    // محاسبه مجموع ارزش طلا
+    // محاسبات طلا
     double totalGoldValue = 0;
     double totalGoldPaid = 0;
-    for (var g in goldList) {
+    double totalGoldProfit = 0;
+    for (var g in dataProvider.goldList) {
       final currentPrice = priceProvider.prices[g.type] ?? 0;
       totalGoldValue += currentPrice * g.quantity;
       totalGoldPaid += g.purchasePricePerUnit * g.quantity;
+      int days = Calculator.daysBetween(g.purchaseDate, DateTime.now());
+      double profit = Calculator.calculateProfit(
+        currentPrice: currentPrice,
+        purchasePrice: g.purchasePricePerUnit,
+        quantity: g.quantity,
+        paidAmount: g.purchasePricePerUnit * g.quantity,
+        interestRate: settings.bankInterestRate,
+        days: days,
+      );
+      totalGoldProfit += profit;
     }
 
-    // محاسبه مجموع ارزش سکه
+    // محاسبات سکه
     double totalCoinValue = 0;
     double totalCoinPaid = 0;
-    for (var c in coinList) {
+    double totalCoinProfit = 0;
+    for (var c in dataProvider.coinList) {
       final currentPrice = priceProvider.prices[c.coinType] ?? 0;
       totalCoinValue += currentPrice * c.count;
       totalCoinPaid += c.purchasePricePerUnit * c.count;
+      int days = Calculator.daysBetween(c.purchaseDate, DateTime.now());
+      double profit = Calculator.calculateProfit(
+        currentPrice: currentPrice,
+        purchasePrice: c.purchasePricePerUnit,
+        quantity: c.count.toDouble(),
+        paidAmount: c.purchasePricePerUnit * c.count,
+        interestRate: settings.bankInterestRate,
+        days: days,
+      );
+      totalCoinProfit += profit;
     }
 
     final totalAssets = totalGoldValue + totalCoinValue;
-    final totalPaid = totalGoldPaid + totalCoinPaid;
-    final totalProfit = totalAssets - totalPaid;
+    final totalProfit = totalGoldProfit + totalCoinProfit;
 
     return Scaffold(
       appBar: AppBar(title: Text('خلاصه دارایی'), centerTitle: true),
@@ -438,23 +491,25 @@ class HomeScreen extends StatelessWidget {
         child: ListView(
           padding: EdgeInsets.all(16),
           children: [
+            // کارت اول: مجموع دارایی‌ها
             Card(
               elevation: 4,
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    Text('آخرین به‌روزرسانی: ${DateFormat('yyyy/MM/dd HH:mm').format(priceProvider.lastUpdated)}',
-                        style: Theme.of(context).textTheme.bodySmall),
+                    Text(
+                      'آخرین به‌روزرسانی: ${priceProvider.lastUpdated.year > 2000 ? DateFormat('yyyy/MM/dd HH:mm').format(priceProvider.lastUpdated) : '---'}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                     SizedBox(height: 16),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
                         _buildSummaryItem(context, 'کل دارایی', NumberFormat('#,###').format(totalAssets), Colors.green),
-                        _buildSummaryItem(context, 'سود/زیان', NumberFormat('#,###').format(totalProfit), totalProfit >= 0 ? Colors.green : Colors.red),
                       ],
                     ),
-                    SizedBox(height: 16),
+                    SizedBox(height: 8),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
@@ -466,29 +521,33 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
             ),
-            SizedBox(height: 20),
-            Text('نمودار توزیع دارایی', style: Theme.of(context).textTheme.titleMedium),
-            SizedBox(height: 10),
-            Container(
-              height: 200,
-              child: PieChart(
-                PieChartData(
-                  sections: [
-                    PieChartSectionData(
-                      value: totalGoldValue,
-                      title: 'طلای آب شده',
-                      color: Colors.amber,
-                      radius: 50,
+            SizedBox(height: 16),
+            // کارت دوم: سودها
+            Card(
+              elevation: 4,
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('سود/زیان کل: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text(
+                          NumberFormat('#,###').format(totalProfit),
+                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: totalProfit >= 0 ? Colors.green : Colors.red),
+                        ),
+                      ],
                     ),
-                    PieChartSectionData(
-                      value: totalCoinValue,
-                      title: 'سکه',
-                      color: Colors.blue,
-                      radius: 50,
+                    Divider(),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _buildSummaryItem(context, 'سود طلا', NumberFormat('#,###').format(totalGoldProfit), totalGoldProfit >= 0 ? Colors.green : Colors.red),
+                        _buildSummaryItem(context, 'سود سکه', NumberFormat('#,###').format(totalCoinProfit), totalCoinProfit >= 0 ? Colors.green : Colors.red),
+                      ],
                     ),
                   ],
-                  sectionsSpace: 2,
-                  centerSpaceRadius: 40,
                 ),
               ),
             ),
@@ -553,20 +612,14 @@ class GoldListScreen extends StatelessWidget {
     final dataProvider = Provider.of<DataProvider>(context);
     final settings = Provider.of<SettingsProvider>(context);
 
-    final goldList = dataProvider.goldList;
-
-    // محاسبه مجموع وزن و ارزش
     double totalWeight = 0;
-    double totalCurrentValue = 0;
     double totalPaid = 0;
     double totalProfit = 0;
 
-    for (var g in goldList) {
+    for (var g in dataProvider.goldList) {
       totalWeight += g.quantity;
-      final currentPrice = priceProvider.prices[g.type] ?? 0;
-      totalCurrentValue += currentPrice * g.quantity;
       totalPaid += g.purchasePricePerUnit * g.quantity;
-
+      final currentPrice = priceProvider.prices[g.type] ?? 0;
       int days = Calculator.daysBetween(g.purchaseDate, DateTime.now());
       double profit = Calculator.calculateProfit(
         currentPrice: currentPrice,
@@ -582,6 +635,7 @@ class GoldListScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text('طلای آب شده'),
+        centerTitle: true,
         actions: [
           IconButton(
             icon: Icon(Icons.add),
@@ -591,25 +645,22 @@ class GoldListScreen extends StatelessWidget {
       ),
       body: Column(
         children: [
-          Card(
-            margin: EdgeInsets.all(8),
-            child: Padding(
-              padding: EdgeInsets.all(12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildSummaryChip('وزن کل', '${totalWeight.toStringAsFixed(3)} گرم'),
-                  _buildSummaryChip('ارزش کل', NumberFormat('#,###').format(totalCurrentValue)),
-                  _buildSummaryChip('سود کل', NumberFormat('#,###').format(totalProfit), color: totalProfit >= 0 ? Colors.green : Colors.red),
-                ],
-              ),
+          // کارت‌های خلاصه
+          Padding(
+            padding: EdgeInsets.all(8),
+            child: Row(
+              children: [
+                Expanded(child: _buildSummaryCard('وزن کل', '${totalWeight.toStringAsFixed(3)} گرم', Colors.amber)),
+                Expanded(child: _buildSummaryCard('مبلغ پرداختی', NumberFormat('#,###').format(totalPaid), Colors.blue)),
+                Expanded(child: _buildSummaryCard('سود خالص', NumberFormat('#,###').format(totalProfit), totalProfit >= 0 ? Colors.green : Colors.red)),
+              ],
             ),
           ),
           Expanded(
             child: ListView.builder(
-              itemCount: goldList.length,
+              itemCount: dataProvider.goldList.length,
               itemBuilder: (ctx, index) {
-                final g = goldList[index];
+                final g = dataProvider.goldList[index];
                 final currentPrice = priceProvider.prices[g.type] ?? 0;
                 final paid = g.purchasePricePerUnit * g.quantity;
                 final currentValue = currentPrice * g.quantity;
@@ -645,7 +696,25 @@ class GoldListScreen extends StatelessWidget {
                         ),
                         IconButton(
                           icon: Icon(Icons.delete, size: 20, color: Colors.red),
-                          onPressed: () => dataProvider.deleteGold(g),
+                          onPressed: () {
+                            showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: Text('تأیید حذف'),
+                                content: Text('آیا از حذف این آیتم اطمینان دارید؟'),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(ctx), child: Text('لغو')),
+                                  TextButton(
+                                    onPressed: () {
+                                      dataProvider.deleteGold(g);
+                                      Navigator.pop(ctx);
+                                    },
+                                    child: Text('حذف', style: TextStyle(color: Colors.red)),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),
@@ -659,13 +728,18 @@ class GoldListScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSummaryChip(String label, String value, {Color color = Colors.black}) {
-    return Column(
-      children: [
-        Text(label, style: TextStyle(fontSize: 12)),
-        SizedBox(height: 4),
-        Text(value, style: TextStyle(fontWeight: FontWeight.bold, color: color)),
-      ],
+  Widget _buildSummaryCard(String label, String value, Color color) {
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(8),
+        child: Column(
+          children: [
+            Text(label, style: TextStyle(fontSize: 12)),
+            SizedBox(height: 4),
+            Text(value, style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+          ],
+        ),
+      ),
     );
   }
 
@@ -765,35 +839,24 @@ class CoinListScreen extends StatelessWidget {
     final dataProvider = Provider.of<DataProvider>(context);
     final settings = Provider.of<SettingsProvider>(context);
 
-    final coinList = dataProvider.coinList;
-
-    // محاسبه مجموع
-    int totalCount = 0;
-    double totalCurrentValue = 0;
+    int totalCoinCount = 0;
+    int rubCount = 0;
+    int nimCount = 0;
+    int tamamCount = 0;
     double totalPaid = 0;
-    double totalProfit = 0;
 
-    for (var c in coinList) {
-      totalCount += c.count;
-      final currentPrice = priceProvider.prices[c.coinType] ?? 0;
-      totalCurrentValue += currentPrice * c.count;
+    for (var c in dataProvider.coinList) {
+      totalCoinCount += c.count;
+      if (c.coinType == 'sekkerob') rubCount += c.count;
+      else if (c.coinType == 'sekkenim') nimCount += c.count;
+      else if (c.coinType == 'sekke' || c.coinType == 'bahar') tamamCount += c.count;
       totalPaid += c.purchasePricePerUnit * c.count;
-
-      int days = Calculator.daysBetween(c.purchaseDate, DateTime.now());
-      double profit = Calculator.calculateProfit(
-        currentPrice: currentPrice,
-        purchasePrice: c.purchasePricePerUnit,
-        quantity: c.count.toDouble(),
-        paidAmount: c.purchasePricePerUnit * c.count,
-        interestRate: settings.bankInterestRate,
-        days: days,
-      );
-      totalProfit += profit;
     }
 
     return Scaffold(
       appBar: AppBar(
         title: Text('سکه‌ها'),
+        centerTitle: true,
         actions: [
           IconButton(
             icon: Icon(Icons.add),
@@ -803,25 +866,46 @@ class CoinListScreen extends StatelessWidget {
       ),
       body: Column(
         children: [
+          // کارت آمار سکه‌ها
           Card(
             margin: EdgeInsets.all(8),
             child: Padding(
               padding: EdgeInsets.all(12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+              child: Column(
                 children: [
-                  _buildSummaryChip('تعداد کل', '$totalCount'),
-                  _buildSummaryChip('ارزش کل', NumberFormat('#,###').format(totalCurrentValue)),
-                  _buildSummaryChip('سود کل', NumberFormat('#,###').format(totalProfit), color: totalProfit >= 0 ? Colors.green : Colors.red),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildStatColumn('ربع', rubCount.toString()),
+                      _buildStatColumn('نیم', nimCount.toString()),
+                      _buildStatColumn('تمام', tamamCount.toString()),
+                    ],
+                  ),
+                  Divider(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('تعداد کل: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                      Text(totalCoinCount.toString(), style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
+          // کارت مجموع پرداختی
+          Card(
+            margin: EdgeInsets.symmetric(horizontal: 8),
+            child: ListTile(
+              title: Text('مجموع مبلغ پرداختی سکه‌ها'),
+              trailing: Text(NumberFormat('#,###').format(totalPaid), style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ),
           Expanded(
             child: ListView.builder(
-              itemCount: coinList.length,
+              itemCount: dataProvider.coinList.length,
               itemBuilder: (ctx, index) {
-                final c = coinList[index];
+                final c = dataProvider.coinList[index];
                 final currentPrice = priceProvider.prices[c.coinType] ?? 0;
                 final paid = c.purchasePricePerUnit * c.count;
                 final currentValue = currentPrice * c.count;
@@ -858,7 +942,25 @@ class CoinListScreen extends StatelessWidget {
                         ),
                         IconButton(
                           icon: Icon(Icons.delete, size: 20, color: Colors.red),
-                          onPressed: () => dataProvider.deleteCoin(c),
+                          onPressed: () {
+                            showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: Text('تأیید حذف'),
+                                content: Text('آیا از حذف این آیتم اطمینان دارید؟'),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(ctx), child: Text('لغو')),
+                                  TextButton(
+                                    onPressed: () {
+                                      dataProvider.deleteCoin(c);
+                                      Navigator.pop(ctx);
+                                    },
+                                    child: Text('حذف', style: TextStyle(color: Colors.red)),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),
@@ -882,12 +984,12 @@ class CoinListScreen extends StatelessWidget {
     }
   }
 
-  Widget _buildSummaryChip(String label, String value, {Color color = Colors.black}) {
+  Widget _buildStatColumn(String label, String value) {
     return Column(
       children: [
-        Text(label, style: TextStyle(fontSize: 12)),
+        Text(label, style: TextStyle(fontWeight: FontWeight.bold)),
         SizedBox(height: 4),
-        Text(value, style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+        Text(value, style: TextStyle(fontSize: 16)),
       ],
     );
   }
@@ -1003,6 +1105,16 @@ class ChartsScreen extends StatelessWidget {
     final goldList = dataProvider.goldList;
     final coinList = dataProvider.coinList;
 
+    // محاسبه مجموع ارزش طلا و سکه برای نمودار دایره‌ای
+    double totalGoldValue = 0;
+    double totalCoinValue = 0;
+    for (var g in goldList) {
+      totalGoldValue += (priceProvider.prices[g.type] ?? 0) * g.quantity;
+    }
+    for (var c in coinList) {
+      totalCoinValue += (priceProvider.prices[c.coinType] ?? 0) * c.count;
+    }
+
     // داده برای نمودار میله‌ای سود هر خرید (ترکیبی)
     List<BarChartGroupData> barGroups = [];
     int index = 0;
@@ -1044,10 +1156,36 @@ class ChartsScreen extends StatelessWidget {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text('نمودارها')),
+      appBar: AppBar(title: Text('نمودارها'), centerTitle: true),
       body: ListView(
         padding: EdgeInsets.all(16),
         children: [
+          Text('نمودار توزیع دارایی', style: Theme.of(context).textTheme.titleMedium),
+          SizedBox(height: 10),
+          Container(
+            height: 200,
+            child: PieChart(
+              PieChartData(
+                sections: [
+                  PieChartSectionData(
+                    value: totalGoldValue,
+                    title: 'طلای آب شده',
+                    color: Colors.amber,
+                    radius: 50,
+                  ),
+                  PieChartSectionData(
+                    value: totalCoinValue,
+                    title: 'سکه',
+                    color: Colors.blue,
+                    radius: 50,
+                  ),
+                ],
+                sectionsSpace: 2,
+                centerSpaceRadius: 40,
+              ),
+            ),
+          ),
+          SizedBox(height: 20),
           Text('نمودار سود/زیان هر خرید', style: Theme.of(context).textTheme.titleMedium),
           SizedBox(height: 10),
           Container(
@@ -1121,7 +1259,7 @@ class SettingsScreen extends StatelessWidget {
     final priceProvider = Provider.of<PriceProvider>(context);
 
     return Scaffold(
-      appBar: AppBar(title: Text('تنظیمات')),
+      appBar: AppBar(title: Text('تنظیمات'), centerTitle: true),
       body: ListView(
         padding: EdgeInsets.all(16),
         children: [
@@ -1202,7 +1340,7 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => PriceProvider()),
+        ChangeNotifierProvider(create: (_) => PriceProvider(prefs)),
         ChangeNotifierProvider(create: (_) => SettingsProvider(prefs)),
         ChangeNotifierProvider(create: (_) => DataProvider(goldBox: goldBox, coinBox: coinBox)),
       ],
@@ -1213,6 +1351,12 @@ void main() async {
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
           fontFamily: 'Vazir', // در صورت وجود فونت
         ),
+        builder: (context, child) {
+          return Directionality(
+            textDirection: TextDirection.rtl,
+            child: child!,
+          );
+        },
         home: MainScreen(),
         debugShowCheckedModeBanner: false,
       ),
