@@ -1,64 +1,42 @@
 name: tweeter_client
-description: A professional Tweeter client with media editing.
+description: A Flutter client for the Tweeter server.
 publish_to: 'none'
-version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
-  # State management & storage
-  provider: ^6.1.2
-  shared_preferences: ^2.3.2
+  # State management
+  flutter_riverpod
 
   # Networking
-  http: ^1.2.2
-  dio: ^5.7.0
+  dio
 
-  # Image/Video picker
-  image_picker: ^1.1.2
+  # Storage
+  shared_preferences
 
-  # Video player
-  video_player: ^2.9.2
-  chewie: ^1.8.5
+  # Image & file picking
+  image_picker
+  file_picker
 
-  # Save to gallery
-  #gallery_saver: ^2.3.2
+  # Image caching
+  cached_network_image
 
-  # Caching & display
-  cached_network_image: ^3.4.1
-  photo_view: ^0.15.0
+  # Media playback
+  video_player
+  just_audio
 
-  # Permissions & connectivity
-  permission_handler: ^11.3.1
-  connectivity_plus: ^6.1.0
-
-  # UI & animations
-  flutter_staggered_animations: ^1.1.0
-  shimmer: ^3.0.0
-  google_fonts: ^6.2.1
-  flutter_svg: ^2.0.10+1
-  animations: ^2.0.11
-  lottie: ^3.1.2
-
-  # Utilities
-  intl: ^0.19.0
-  path_provider: ^2.1.5
-  flutter_dotenv: ^5.2.1
-  just_audio: ^0.9.36   # برای پخش صدا (اختیاری)
+  # File handling
+  path_provider
+  open_file
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
-
-dependency_overrides:
-  http: ^0.13.5
+  flutter_lints
 
 flutter:
   uses-material-design: true
-  # assets:
-  #   - .env   # اگر فایل env دارید، این خط را از حالت کامنت خارج کنید
