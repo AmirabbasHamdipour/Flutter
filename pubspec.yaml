@@ -1,4 +1,3 @@
-# pubspec.yaml
 name: gold_coin_manager
 description: مدیریت دارایی طلا و سکه با دریافت قیمت آنلاین
 publish_to: 'none'
@@ -27,5 +26,23 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  # assets:
-  #   - fonts/  # اگر فونت فارسی دارید
+  
+  # اضافه کردن پوشه assets
+  assets:
+    - assets/fonts/
+    # اگر بعداً عکس یا آیکون اضافه کردی می‌تونی اینجا اضافه کنی
+    # - assets/images/
+  
+  # اضافه کردن فونت Vazir
+  fonts:
+    - family: Vazir
+      fonts:
+        - asset: assets/fonts/Vazir.ttf
+          weight: 400
+        # اگر نسخه‌های دیگه فونت رو هم داری، می‌تونی اضافه کنی
+        # - asset: assets/fonts/Vazir-Bold.ttf
+        #   weight: 700
+        # - asset: assets/fonts/Vazir-Light.ttf
+        #   weight: 300
+        # - asset: assets/fonts/Vazir-Medium.ttf
+        #   weight: 500
