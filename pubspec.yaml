@@ -10,33 +10,27 @@ dependencies:
     sdk: flutter
 
   # State management
-  flutter_riverpod
-
+  flutter_riverpod:
   # Networking
-  dio
-
+  dio:
   # Storage
-  shared_preferences
-
+  shared_preferences:
   # Image & file picking
-  image_picker
-  file_picker
-
+  image_picker:
+  file_picker:
   # Image caching
-  cached_network_image
-
+  cached_network_image:
   # Media playback
-  video_player
-  just_audio
-
+  video_player:
+  just_audio:
   # File handling
-  path_provider
-  open_file
+  path_provider:
+  open_file:
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints
+  flutter_lints:
 
 flutter:
   uses-material-design: true
