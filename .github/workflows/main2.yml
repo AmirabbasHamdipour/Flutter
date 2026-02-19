@@ -3,10 +3,10 @@ name: Flutter Android Build + Push to Repo
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:        # اجرای دستی
+  workflow_dispatch:
 
 permissions:
-  contents: write           # اجازه push به مخزن
+  contents: write
 
 jobs:
   build:
@@ -37,11 +37,9 @@ jobs:
       - name: Create new Flutter project
         if: steps.check_project.outputs.exists == 'false'
         run: |
-          # تبدیل نام مخزن به یک نام معتبر Dart
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
           PROJECT_NAME=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g' | sed 's/^[0-9]/_/')
           [ -z "$PROJECT_NAME" ] && PROJECT_NAME="my_flutter_app"
-          
           echo "Creating Flutter project: $PROJECT_NAME"
           flutter create --org com.example.app --project-name "$PROJECT_NAME" .
 
@@ -56,6 +54,10 @@ jobs:
 
       - name: Install dependencies
         run: flutter pub get
+
+      # ===== اجرای دستور ساخت آیکون =====
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
 
       - name: run build_runner
         run: flutter pub run build_runner build --delete-conflicting-outputs
