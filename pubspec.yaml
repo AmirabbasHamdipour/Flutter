@@ -1,31 +1,29 @@
-name: tweeter_client
-description: A Flutter client for the Tweeter server.
+# pubspec.yaml
+name: tweeter_app
+description: A new Flutter project.
+
 publish_to: 'none'
 
+version: 1.0.0+1
+
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=2.19.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
-
-  # State management
-  flutter_riverpod: ^2.4.0
-  # Networking
-  dio:
-  # Storage
+  cupertino_icons:
+  http:
+  provider:
   shared_preferences:
-  # Image & file picking
   image_picker:
-  file_picker:
-  # Image caching
-  cached_network_image:
-  # Media playback
   video_player:
-  just_audio:
-  # File handling
-  path_provider:
-  open_file:
+  audioplayers:
+  cached_network_image:
+  intl:
+  flutter_staggered_animations:
+  photo_view:
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
