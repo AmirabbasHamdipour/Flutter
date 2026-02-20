@@ -21,13 +21,13 @@ class GoldTransaction extends HiveObject {
   @HiveField(0)
   String id;
   @HiveField(1)
-  String type; // gold_18, gold_24, gold_ons, gold_mazneh (برای طلا) و برای سکه: coin_old, coin_new, coin_half, coin_quarter, coin_1g
+  String type; // gold18, gold24, ons, dollar
   @HiveField(2)
   DateTime purchaseDate;
   @HiveField(3)
   double purchasePricePerUnit; // فی خرید
   @HiveField(4)
-  double quantity; // وزن بر حسب گرم (برای طلا) یا تعداد (برای سکه؟ اما اینجا double است)
+  double quantity; // وزن بر حسب گرم
   @HiveField(5)
   String description;
   @HiveField(6)
@@ -49,7 +49,7 @@ class CoinTransaction extends HiveObject {
   @HiveField(0)
   String id;
   @HiveField(1)
-  String coinType; // coin_old, coin_new, coin_half, coin_quarter, coin_1g
+  String coinType; // sekke, bahar, sekkenim, sekkerob
   @HiveField(2)
   DateTime purchaseDate;
   @HiveField(3)
@@ -69,62 +69,15 @@ class CoinTransaction extends HiveObject {
   });
 }
 
-// -------------------- مدل پاسخ API --------------------
-class PriceResponse {
-  final String name;
-  final double? currentPrice;
-  final double? high;
-  final double? low;
-  final double? yesterdayAvg;
-  final Change? change;
-
-  PriceResponse({
-    required this.name,
-    this.currentPrice,
-    this.high,
-    this.low,
-    this.yesterdayAvg,
-    this.change,
-  });
-
-  factory PriceResponse.fromJson(Map<String, dynamic> json) {
-    return PriceResponse(
-      name: json['name'] ?? '',
-      currentPrice: json['current_price'] != null ? (json['current_price'] as num).toDouble() : null,
-      high: json['high'] != null ? (json['high'] as num).toDouble() : null,
-      low: json['low'] != null ? (json['low'] as num).toDouble() : null,
-      yesterdayAvg: json['yesterday_avg'] != null ? (json['yesterday_avg'] as num).toDouble() : null,
-      change: json['change'] != null ? Change.fromJson(json['change']) : null,
-    );
-  }
-}
-
-class Change {
-  final double? value;
-  final double? percent;
-  final String? direction;
-
-  Change({this.value, this.percent, this.direction});
-
-  factory Change.fromJson(Map<String, dynamic> json) {
-    return Change(
-      value: json['value'] != null ? (json['value'] as num).toDouble() : null,
-      percent: json['percent'] != null ? (json['percent'] as num).toDouble() : null,
-      direction: json['direction'],
-    );
-  }
-}
-
-// -------------------- API Service (تطبیق با API جدید) --------------------
+// -------------------- API Service --------------------
 class ApiService {
   static const String baseUrl = 'https://tweeter.runflare.run/price/';
 
-  static Future<PriceResponse?> fetchPrice(String obj) async {
+  static Future<double?> fetchPrice(String obj) async {
     try {
       final response = await http.get(Uri.parse('$baseUrl$obj'));
       if (response.statusCode == 200) {
-        final jsonData = jsonDecode(response.body);
-        return PriceResponse.fromJson(jsonData);
+        return double.tryParse(response.body);
       }
     } catch (e) {
       print('Error fetching $obj: $e');
@@ -133,22 +86,12 @@ class ApiService {
   }
 
   // دریافت همه قیمت‌های مورد نیاز
-  static Future<Map<String, PriceResponse>> fetchAllPrices() async {
-    final types = [
-      'gold_18',
-      'gold_24',
-      'gold_ons',
-      'gold_mazneh',
-      'coin_old',
-      'coin_new',
-      'coin_half',
-      'coin_quarter',
-      'coin_1g'
-    ];
-    Map<String, PriceResponse> prices = {};
+  static Future<Map<String, double>> fetchAllPrices() async {
+    final types = ['gold18', 'gold24', 'ons', 'dollar', 'sekke', 'sekkenim', 'sekkerob', 'bahar'];
+    Map<String, double> prices = {};
     for (String type in types) {
-      final response = await fetchPrice(type);
-      if (response != null) prices[type] = response;
+      final price = await fetchPrice(type);
+      if (price != null) prices[type] = price;
     }
     return prices;
   }
@@ -156,18 +99,15 @@ class ApiService {
 
 // -------------------- Providers --------------------
 class PriceProvider extends ChangeNotifier {
-  Map<String, PriceResponse> _prices = {};
-  Map<String, PriceResponse> _lastSavedPrices = {};
-  DateTime _lastUpdated = DateTime(2000);
+  Map<String, double> _prices = {};
+  Map<String, double> _lastSavedPrices = {};
+  DateTime _lastUpdated = DateTime(2000); // تاریخ پیش‌فرض قدیمی
   Timer? _timer;
   final SharedPreferences _prefs;
 
-  static const List<String> _priceKeys = [
-    'gold_18', 'gold_24', 'gold_ons', 'gold_mazneh',
-    'coin_old', 'coin_new', 'coin_half', 'coin_quarter', 'coin_1g'
-  ];
+  static const List<String> _priceKeys = ['gold18', 'gold24', 'ons', 'dollar', 'sekke', 'sekkenim', 'sekkerob', 'bahar'];
 
-  Map<String, PriceResponse> get prices => UnmodifiableMapView(_prices);
+  Map<String, double> get prices => UnmodifiableMapView(_prices);
   DateTime get lastUpdated => _lastUpdated;
 
   PriceProvider(this._prefs) {
@@ -179,14 +119,9 @@ class PriceProvider extends ChangeNotifier {
   void _loadSavedPrices() {
     _lastSavedPrices = {};
     for (var key in _priceKeys) {
-      String? jsonStr = _prefs.getString('price_$key');
-      if (jsonStr != null) {
-        try {
-          final json = jsonDecode(jsonStr);
-          _lastSavedPrices[key] = PriceResponse.fromJson(json);
-        } catch (e) {
-          print('Error loading saved price for $key: $e');
-        }
+      double? value = _prefs.getDouble('price_$key');
+      if (value != null) {
+        _lastSavedPrices[key] = value;
       }
     }
     if (_lastSavedPrices.isNotEmpty) {
@@ -198,23 +133,9 @@ class PriceProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _savePrices(Map<String, PriceResponse> prices) async {
+  Future<void> _savePrices(Map<String, double> prices) async {
     for (var entry in prices.entries) {
-      final jsonStr = jsonEncode({
-        'name': entry.value.name,
-        'current_price': entry.value.currentPrice,
-        'high': entry.value.high,
-        'low': entry.value.low,
-        'yesterday_avg': entry.value.yesterdayAvg,
-        'change': entry.value.change != null
-            ? {
-                'value': entry.value.change!.value,
-                'percent': entry.value.change!.percent,
-                'direction': entry.value.change!.direction,
-              }
-            : null,
-      });
-      await _prefs.setString('price_${entry.key}', jsonStr);
+      await _prefs.setDouble('price_${entry.key}', entry.value);
     }
     await _prefs.setInt('last_update', DateTime.now().millisecondsSinceEpoch);
   }
@@ -237,7 +158,8 @@ class PriceProvider extends ChangeNotifier {
       await _savePrices(newPrices);
       notifyListeners();
     } else if (_lastSavedPrices.isNotEmpty) {
-      // استفاده از آخرین مقادیر ذخیره شده
+      // اگر نتواستیم دریافت کنیم، مقادیر قبلی را نمایش می‌دهیم (هم‌اکنون در _prices هستند)
+      // فقط اطلاع‌رسانی می‌کنیم تا زمان به‌روزرسانی تغییر نکند
     }
     notifyListeners();
   }
@@ -301,7 +223,7 @@ class DataProvider extends ChangeNotifier {
     final golds = [
       GoldTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + '1',
-        type: 'gold_18',
+        type: 'gold18',
         purchaseDate: DateTime(2025, 1, 2),
         purchasePricePerUnit: 52518583,
         quantity: 100,
@@ -310,7 +232,7 @@ class DataProvider extends ChangeNotifier {
       ),
       GoldTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + '2',
-        type: 'gold_18',
+        type: 'gold18',
         purchaseDate: DateTime(2025, 2, 9),
         purchasePricePerUnit: 65792511,
         quantity: 61.195,
@@ -319,7 +241,7 @@ class DataProvider extends ChangeNotifier {
       ),
       GoldTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + '3',
-        type: 'gold_18',
+        type: 'gold18',
         purchaseDate: DateTime(2025, 4, 13),
         purchasePricePerUnit: 76180802,
         quantity: 50,
@@ -328,7 +250,7 @@ class DataProvider extends ChangeNotifier {
       ),
       GoldTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + '4',
-        type: 'gold_18',
+        type: 'gold18',
         purchaseDate: DateTime(2025, 10, 6),
         purchasePricePerUnit: 105960571,
         quantity: 100,
@@ -337,7 +259,7 @@ class DataProvider extends ChangeNotifier {
       ),
       GoldTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + '5',
-        type: 'gold_18',
+        type: 'gold18',
         purchaseDate: DateTime(2025, 11, 10),
         purchasePricePerUnit: 105730000,
         quantity: 60,
@@ -346,7 +268,7 @@ class DataProvider extends ChangeNotifier {
       ),
       GoldTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + '6',
-        type: 'gold_18',
+        type: 'gold18',
         purchaseDate: DateTime(2025, 12, 14),
         purchasePricePerUnit: 138048000,
         quantity: 15,
@@ -361,7 +283,7 @@ class DataProvider extends ChangeNotifier {
     final coins = [
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c1',
-        coinType: 'coin_quarter',
+        coinType: 'sekkerob',
         purchaseDate: DateTime(2023, 1, 17),
         purchasePricePerUnit: 70500000,
         count: 3,
@@ -369,7 +291,7 @@ class DataProvider extends ChangeNotifier {
       ),
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c2',
-        coinType: 'coin_new',
+        coinType: 'sekke',
         purchaseDate: DateTime(2025, 1, 1),
         purchasePricePerUnit: 560000000,
         count: 2,
@@ -377,7 +299,7 @@ class DataProvider extends ChangeNotifier {
       ),
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c3',
-        coinType: 'coin_quarter',
+        coinType: 'sekkerob',
         purchaseDate: DateTime(2025, 1, 1),
         purchasePricePerUnit: 174000000,
         count: 1,
@@ -385,7 +307,7 @@ class DataProvider extends ChangeNotifier {
       ),
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c4',
-        coinType: 'coin_new',
+        coinType: 'sekke',
         purchaseDate: DateTime(2025, 9, 8),
         purchasePricePerUnit: 832224932,
         count: 6,
@@ -393,7 +315,7 @@ class DataProvider extends ChangeNotifier {
       ),
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c5',
-        coinType: 'coin_half',
+        coinType: 'sekkenim',
         purchaseDate: DateTime(2025, 9, 8),
         purchasePricePerUnit: 441195425,
         count: 10,
@@ -401,7 +323,7 @@ class DataProvider extends ChangeNotifier {
       ),
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c6',
-        coinType: 'coin_quarter',
+        coinType: 'sekkerob',
         purchaseDate: DateTime(2025, 9, 8),
         purchasePricePerUnit: 257758617,
         count: 14,
@@ -409,7 +331,7 @@ class DataProvider extends ChangeNotifier {
       ),
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c7',
-        coinType: 'coin_half',
+        coinType: 'sekkenim',
         purchaseDate: DateTime(2025, 11, 12),
         purchasePricePerUnit: 575585000,
         count: 1,
@@ -417,7 +339,7 @@ class DataProvider extends ChangeNotifier {
       ),
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c8',
-        coinType: 'coin_quarter',
+        coinType: 'sekkerob',
         purchaseDate: DateTime(2025, 11, 12),
         purchasePricePerUnit: 327850000,
         count: 2,
@@ -425,7 +347,7 @@ class DataProvider extends ChangeNotifier {
       ),
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c9',
-        coinType: 'coin_new',
+        coinType: 'sekke',
         purchaseDate: DateTime(2026, 2, 15),
         purchasePricePerUnit: 1930000000,
         count: 4,
@@ -433,7 +355,7 @@ class DataProvider extends ChangeNotifier {
       ),
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c10',
-        coinType: 'coin_quarter',
+        coinType: 'sekkerob',
         purchaseDate: DateTime(2026, 2, 15),
         purchasePricePerUnit: 525000000,
         count: 6,
@@ -441,7 +363,7 @@ class DataProvider extends ChangeNotifier {
       ),
       CoinTransaction(
         id: DateTime.now().millisecondsSinceEpoch.toString() + 'c11',
-        coinType: 'coin_half',
+        coinType: 'sekkenim',
         purchaseDate: DateTime(2026, 2, 15),
         purchasePricePerUnit: 970000000,
         count: 3,
@@ -451,6 +373,7 @@ class DataProvider extends ChangeNotifier {
     coinBox.addAll(coins);
   }
 
+  // CRUD for Gold
   List<GoldTransaction> get goldList => goldBox.values.toList();
 
   Future<void> addGold(GoldTransaction transaction) async {
@@ -468,6 +391,7 @@ class DataProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // CRUD for Coin
   List<CoinTransaction> get coinList => coinBox.values.toList();
 
   Future<void> addCoin(CoinTransaction transaction) async {
@@ -517,11 +441,12 @@ class HomeScreen extends StatelessWidget {
     final dataProvider = Provider.of<DataProvider>(context);
     final settings = Provider.of<SettingsProvider>(context);
 
+    // محاسبات طلا
     double totalGoldValue = 0;
     double totalGoldPaid = 0;
     double totalGoldProfit = 0;
     for (var g in dataProvider.goldList) {
-      final currentPrice = priceProvider.prices[g.type]?.currentPrice ?? 0;
+      final currentPrice = priceProvider.prices[g.type] ?? 0;
       totalGoldValue += currentPrice * g.quantity;
       totalGoldPaid += g.purchasePricePerUnit * g.quantity;
       int days = Calculator.daysBetween(g.purchaseDate, DateTime.now());
@@ -536,11 +461,12 @@ class HomeScreen extends StatelessWidget {
       totalGoldProfit += profit;
     }
 
+    // محاسبات سکه
     double totalCoinValue = 0;
     double totalCoinPaid = 0;
     double totalCoinProfit = 0;
     for (var c in dataProvider.coinList) {
-      final currentPrice = priceProvider.prices[c.coinType]?.currentPrice ?? 0;
+      final currentPrice = priceProvider.prices[c.coinType] ?? 0;
       totalCoinValue += currentPrice * c.count;
       totalCoinPaid += c.purchasePricePerUnit * c.count;
       int days = Calculator.daysBetween(c.purchaseDate, DateTime.now());
@@ -565,6 +491,7 @@ class HomeScreen extends StatelessWidget {
         child: ListView(
           padding: EdgeInsets.all(16),
           children: [
+            // کارت اول: مجموع دارایی‌ها
             Card(
               elevation: 4,
               child: Padding(
@@ -586,8 +513,8 @@ class HomeScreen extends StatelessWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
-                        _buildSummaryItem(context, 'طلای آب شده', NumberFormat('#,###').format(totalGoldValue), Colors.blue), // رنگ آبی
-                        _buildSummaryItem(context, 'سکه', NumberFormat('#,###').format(totalCoinValue), Colors.amber),
+                        _buildSummaryItem(context, 'طلای آب شده', NumberFormat('#,###').format(totalGoldValue), Colors.blue),
+                        _buildSummaryItem(context, 'سکه', NumberFormat('#,###').format(totalCoinValue), Colors.blue),
                       ],
                     ),
                   ],
@@ -595,6 +522,7 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
             SizedBox(height: 16),
+            // کارت دوم: سودها
             Card(
               elevation: 4,
               child: Padding(
@@ -632,7 +560,6 @@ class HomeScreen extends StatelessWidget {
               crossAxisCount: 2,
               childAspectRatio: 2,
               children: priceProvider.prices.entries.map((e) {
-                final price = e.value.currentPrice ?? 0;
                 return Card(
                   child: Padding(
                     padding: EdgeInsets.all(8),
@@ -640,7 +567,7 @@ class HomeScreen extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(_getPersianName(e.key), style: TextStyle(fontWeight: FontWeight.bold)),
-                        Text(NumberFormat('#,###').format(price)),
+                        Text(NumberFormat('#,###').format(e.value)),
                       ],
                     ),
                   ),
@@ -665,15 +592,14 @@ class HomeScreen extends StatelessWidget {
 
   String _getPersianName(String key) {
     switch (key) {
-      case 'gold_18': return 'طلای ۱۸ عیار';
-      case 'gold_24': return 'طلای ۲۴ عیار';
-      case 'gold_ons': return 'انس طلا';
-      case 'gold_mazneh': return 'مظنه تهران';
-      case 'coin_old': return 'سکه طرح قدیم';
-      case 'coin_new': return 'سکه طرح جدید';
-      case 'coin_half': return 'نیم سکه';
-      case 'coin_quarter': return 'ربع سکه';
-      case 'coin_1g': return 'سکه یک گرمی';
+      case 'gold18': return 'طلای ۱۸ عیار';
+      case 'gold24': return 'طلای ۲۴ عیار';
+      case 'ons': return 'اونس جهانی';
+      case 'dollar': return 'دلار';
+      case 'sekke': return 'سکه تمام (امامی)';
+      case 'sekkenim': return 'نیم سکه';
+      case 'sekkerob': return 'ربع سکه';
+      case 'bahar': return 'سکه تمام (قدیم)';
       default: return key;
     }
   }
@@ -693,7 +619,7 @@ class GoldListScreen extends StatelessWidget {
     for (var g in dataProvider.goldList) {
       totalWeight += g.quantity;
       totalPaid += g.purchasePricePerUnit * g.quantity;
-      final currentPrice = priceProvider.prices[g.type]?.currentPrice ?? 0;
+      final currentPrice = priceProvider.prices[g.type] ?? 0;
       int days = Calculator.daysBetween(g.purchaseDate, DateTime.now());
       double profit = Calculator.calculateProfit(
         currentPrice: currentPrice,
@@ -719,13 +645,14 @@ class GoldListScreen extends StatelessWidget {
       ),
       body: Column(
         children: [
+          // کارت‌های خلاصه
           Padding(
             padding: EdgeInsets.all(8),
             child: Row(
               children: [
-                Expanded(child: _buildSummaryCard('وزن کل', '${totalWeight.toStringAsFixed(3)} گرم', Colors.amber)),
+                Expanded(child: _buildSummaryCard('وزن کل', '${totalWeight.toStringAsFixed(3)} گرم', Colors.blue)),
                 Expanded(child: _buildSummaryCard('مبلغ پرداختی', NumberFormat('#,###').format(totalPaid), Colors.blue)),
-                Expanded(child: _buildSummaryCard('سود خالص', NumberFormat('#,###').format(totalProfit), totalProfit >= 0 ? Colors.green : Colors.red)),
+                //Expanded(child: _buildSummaryCard('سود خالص', NumberFormat('#,###').format(totalProfit), totalProfit >= 0 ? Colors.green : Colors.red)),
               ],
             ),
           ),
@@ -734,7 +661,7 @@ class GoldListScreen extends StatelessWidget {
               itemCount: dataProvider.goldList.length,
               itemBuilder: (ctx, index) {
                 final g = dataProvider.goldList[index];
-                final currentPrice = priceProvider.prices[g.type]?.currentPrice ?? 0;
+                final currentPrice = priceProvider.prices[g.type] ?? 0;
                 final paid = g.purchasePricePerUnit * g.quantity;
                 final currentValue = currentPrice * g.quantity;
                 final days = Calculator.daysBetween(g.purchaseDate, DateTime.now());
@@ -877,7 +804,7 @@ class GoldListScreen extends StatelessWidget {
                   formKey.currentState!.save();
                   final newTrans = GoldTransaction(
                     id: existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
-                    type: 'gold_18',
+                    type: 'gold18',
                     purchaseDate: selectedDate,
                     purchasePricePerUnit: price,
                     quantity: weight,
@@ -915,14 +842,14 @@ class CoinListScreen extends StatelessWidget {
     int totalCoinCount = 0;
     int rubCount = 0;
     int nimCount = 0;
-    int tamamCount = 0; // coin_new + coin_old
+    int tamamCount = 0;
     double totalPaid = 0;
 
     for (var c in dataProvider.coinList) {
       totalCoinCount += c.count;
-      if (c.coinType == 'coin_quarter') rubCount += c.count;
-      else if (c.coinType == 'coin_half') nimCount += c.count;
-      else if (c.coinType == 'coin_new' || c.coinType == 'coin_old') tamamCount += c.count;
+      if (c.coinType == 'sekkerob') rubCount += c.count;
+      else if (c.coinType == 'sekkenim') nimCount += c.count;
+      else if (c.coinType == 'sekke' || c.coinType == 'bahar') tamamCount += c.count;
       totalPaid += c.purchasePricePerUnit * c.count;
     }
 
@@ -939,6 +866,7 @@ class CoinListScreen extends StatelessWidget {
       ),
       body: Column(
         children: [
+          // کارت آمار سکه‌ها
           Card(
             margin: EdgeInsets.all(8),
             child: Padding(
@@ -965,6 +893,7 @@ class CoinListScreen extends StatelessWidget {
               ),
             ),
           ),
+          // کارت مجموع پرداختی
           Card(
             margin: EdgeInsets.symmetric(horizontal: 8),
             child: ListTile(
@@ -977,7 +906,7 @@ class CoinListScreen extends StatelessWidget {
               itemCount: dataProvider.coinList.length,
               itemBuilder: (ctx, index) {
                 final c = dataProvider.coinList[index];
-                final currentPrice = priceProvider.prices[c.coinType]?.currentPrice ?? 0;
+                final currentPrice = priceProvider.prices[c.coinType] ?? 0;
                 final paid = c.purchasePricePerUnit * c.count;
                 final currentValue = currentPrice * c.count;
                 final days = Calculator.daysBetween(c.purchaseDate, DateTime.now());
@@ -1047,11 +976,10 @@ class CoinListScreen extends StatelessWidget {
 
   String _getCoinName(String type) {
     switch (type) {
-      case 'coin_new': return 'سکه تمام (امامی)';
-      case 'coin_old': return 'سکه تمام (قدیم)';
-      case 'coin_half': return 'نیم سکه';
-      case 'coin_quarter': return 'ربع سکه';
-      case 'coin_1g': return 'سکه یک گرمی';
+      case 'sekke': return 'سکه تمام (امامی)';
+      case 'bahar': return 'سکه تمام (قدیم)';
+      case 'sekkenim': return 'نیم سکه';
+      case 'sekkerob': return 'ربع سکه';
       default: return type;
     }
   }
@@ -1072,7 +1000,7 @@ class CoinListScreen extends StatelessWidget {
     double price = existing?.purchasePricePerUnit ?? 0;
     int count = existing?.count ?? 1;
     String desc = existing?.description ?? '';
-    String coinType = existing?.coinType ?? 'coin_new';
+    String coinType = existing?.coinType ?? 'sekke';
 
     showDialog(
       context: context,
@@ -1087,11 +1015,10 @@ class CoinListScreen extends StatelessWidget {
                   DropdownButtonFormField<String>(
                     value: coinType,
                     items: [
-                      DropdownMenuItem(value: 'coin_new', child: Text('تمام (امامی)')),
-                      DropdownMenuItem(value: 'coin_old', child: Text('تمام (قدیم)')),
-                      DropdownMenuItem(value: 'coin_half', child: Text('نیم سکه')),
-                      DropdownMenuItem(value: 'coin_quarter', child: Text('ربع سکه')),
-                      DropdownMenuItem(value: 'coin_1g', child: Text('سکه یک گرمی')),
+                      DropdownMenuItem(value: 'sekke', child: Text('تمام (امامی)')),
+                      DropdownMenuItem(value: 'bahar', child: Text('تمام (قدیم)')),
+                      DropdownMenuItem(value: 'sekkenim', child: Text('نیم سکه')),
+                      DropdownMenuItem(value: 'sekkerob', child: Text('ربع سکه')),
                     ],
                     onChanged: (v) => coinType = v!,
                     decoration: InputDecoration(labelText: 'نوع سکه'),
@@ -1181,73 +1108,28 @@ class ChartsScreen extends StatelessWidget {
     // محاسبه ارزش طلا
     double totalGoldValue = 0;
     for (var g in goldList) {
-      totalGoldValue += (priceProvider.prices[g.type]?.currentPrice ?? 0) * g.quantity;
+      totalGoldValue += (priceProvider.prices[g.type] ?? 0) * g.quantity;
     }
 
     // محاسبه ارزش سکه به تفکیک
-    double totalCoinRob = 0; // ربع
-    double totalCoinNim = 0; // نیم
-    double totalCoinTamam = 0; // تمام (جدید و قدیم)
-    double totalCoin1g = 0; // یک گرمی
+    double totalCoinRob = 0;
+    double totalCoinNim = 0;
+    double totalCoinTamam = 0;
     for (var c in coinList) {
-      final currentPrice = priceProvider.prices[c.coinType]?.currentPrice ?? 0;
+      final currentPrice = priceProvider.prices[c.coinType] ?? 0;
       final value = currentPrice * c.count;
-      if (c.coinType == 'coin_quarter') totalCoinRob += value;
-      else if (c.coinType == 'coin_half') totalCoinNim += value;
-      else if (c.coinType == 'coin_new' || c.coinType == 'coin_old') totalCoinTamam += value;
-      else if (c.coinType == 'coin_1g') totalCoin1g += value;
+      if (c.coinType == 'sekkerob') totalCoinRob += value;
+      else if (c.coinType == 'sekkenim') totalCoinNim += value;
+      else if (c.coinType == 'sekke' || c.coinType == 'bahar') totalCoinTamam += value;
     }
 
-    final totalAssets = totalGoldValue + totalCoinRob + totalCoinNim + totalCoinTamam + totalCoin1g;
+    final totalAssets = totalGoldValue + totalCoinRob + totalCoinNim + totalCoinTamam;
 
-    // --- نمودار دایره‌ای ---
-    List<PieChartSectionData> pieSections = [];
-    if (totalGoldValue > 0) {
-      pieSections.add(PieChartSectionData(
-        value: totalGoldValue,
-        title: 'طلای آب شده\n${((totalGoldValue / totalAssets) * 100).toStringAsFixed(1)}%',
-        color: Colors.blue, // رنگ آبی برای طلا
-        radius: 50,
-      ));
-    }
-    if (totalCoinRob > 0) {
-      pieSections.add(PieChartSectionData(
-        value: totalCoinRob,
-        title: 'ربع سکه\n${((totalCoinRob / totalAssets) * 100).toStringAsFixed(1)}%',
-        color: Colors.amber,
-        radius: 50,
-      ));
-    }
-    if (totalCoinNim > 0) {
-      pieSections.add(PieChartSectionData(
-        value: totalCoinNim,
-        title: 'نیم سکه\n${((totalCoinNim / totalAssets) * 100).toStringAsFixed(1)}%',
-        color: Colors.green,
-        radius: 50,
-      ));
-    }
-    if (totalCoinTamam > 0) {
-      pieSections.add(PieChartSectionData(
-        value: totalCoinTamam,
-        title: 'تمام سکه\n${((totalCoinTamam / totalAssets) * 100).toStringAsFixed(1)}%',
-        color: Colors.purple,
-        radius: 50,
-      ));
-    }
-    if (totalCoin1g > 0) {
-      pieSections.add(PieChartSectionData(
-        value: totalCoin1g,
-        title: 'یک گرمی\n${((totalCoin1g / totalAssets) * 100).toStringAsFixed(1)}%',
-        color: Colors.orange,
-        radius: 50,
-      ));
-    }
-
-    // --- نمودار میله‌ای سود هر خرید ---
+    // داده برای نمودار میله‌ای سود هر خرید (ترکیبی)
     List<BarChartGroupData> barGroups = [];
     int index = 0;
     for (var g in goldList) {
-      final currentPrice = priceProvider.prices[g.type]?.currentPrice ?? 0;
+      final currentPrice = priceProvider.prices[g.type] ?? 0;
       final paid = g.purchasePricePerUnit * g.quantity;
       final days = Calculator.daysBetween(g.purchaseDate, DateTime.now());
       final profit = Calculator.calculateProfit(
@@ -1265,7 +1147,7 @@ class ChartsScreen extends StatelessWidget {
       );
     }
     for (var c in coinList) {
-      final currentPrice = priceProvider.prices[c.coinType]?.currentPrice ?? 0;
+      final currentPrice = priceProvider.prices[c.coinType] ?? 0;
       final paid = c.purchasePricePerUnit * c.count;
       final days = Calculator.daysBetween(c.purchaseDate, DateTime.now());
       final profit = Calculator.calculateProfit(
@@ -1283,77 +1165,45 @@ class ChartsScreen extends StatelessWidget {
       );
     }
 
-    // --- نمودار روند ارزش کل دارایی (با استفاده از قیمت دیروز و امروز و اولین خرید) ---
-    // محاسبه ارزش کل با قیمت دیروز (yesterday_avg)
-    double totalAssetsYesterday = 0;
-    for (var g in goldList) {
-      final yesterdayPrice = priceProvider.prices[g.type]?.yesterdayAvg ?? 0;
-      totalAssetsYesterday += yesterdayPrice * g.quantity;
-    }
-    for (var c in coinList) {
-      final yesterdayPrice = priceProvider.prices[c.coinType]?.yesterdayAvg ?? 0;
-      totalAssetsYesterday += yesterdayPrice * c.count;
-    }
-
-    // ارزش کل در تاریخ اولین خرید (با فرض اینکه اولین خرید قدیمی‌ترین تاریخ باشد)
-    DateTime firstPurchaseDate = DateTime.now();
-    double firstPurchaseTotal = 0;
-    // پیدا کردن اولین تاریخ
-    for (var g in goldList) {
-      if (g.purchaseDate.isBefore(firstPurchaseDate)) firstPurchaseDate = g.purchaseDate;
-    }
-    for (var c in coinList) {
-      if (c.purchaseDate.isBefore(firstPurchaseDate)) firstPurchaseDate = c.purchaseDate;
-    }
-    // محاسبه مجموع مبالغ پرداختی در آن تاریخ (فقط خریدهایی که در آن تاریخ یا قبل از آن انجام شده)
-    // ساده‌سازی: از تمام خریدها استفاده می‌کنیم چون خریدهای بعد از آن تاریخ در آن زمان وجود نداشته‌اند.
-    // در این نسخه ساده، فرض می‌کنیم که اولین خرید تنها خرید در آن تاریخ است.
-    // برای دقیق‌تر شدن، می‌توانیم فقط خریدهایی را در نظر بگیریم که در آن تاریخ یا قبل از آن هستند.
-    // اما برای سادگی، از مجموع کل مبالغ پرداختی استفاده می‌کنیم (که با واقعیت تطابق ندارد).
-    // بهتر است از مجموع مبالغ پرداختی همان خریدهای قبل از آن تاریخ استفاده کنیم.
-    // ما اینجا یک پیاده‌سازی ساده انجام می‌دهیم: از اولین خرید به عنوان یک نقطه استفاده می‌کنیم.
-    // ارزش آن خرید در آن تاریخ = مبلغ پرداختی آن خرید (چون قیمت همان لحظه را ندارد)
-    // اما اگر چند خرید در آن تاریخ باشند، مجموع مبالغ پرداختی آنها.
-    double firstPurchaseValue = 0;
-    for (var g in goldList) {
-      if (g.purchaseDate == firstPurchaseDate) {
-        firstPurchaseValue += g.purchasePricePerUnit * g.quantity;
-      }
-    }
-    for (var c in coinList) {
-      if (c.purchaseDate == firstPurchaseDate) {
-        firstPurchaseValue += c.purchasePricePerUnit * c.count;
-      }
-    }
-
-    // ایجاد نقاط برای نمودار خطی (سه نقطه)
-    List<FlSpot> lineSpots = [];
-    lineSpots.add(FlSpot(0, firstPurchaseValue)); // نقطه اول (روز 0 = اولین خرید)
-    // محاسبه فاصله روزها از اولین خرید تا دیروز و امروز
-    int daysToYesterday = Calculator.daysBetween(firstPurchaseDate, DateTime.now().subtract(Duration(days: 1)));
-    int daysToToday = Calculator.daysBetween(firstPurchaseDate, DateTime.now());
-    lineSpots.add(FlSpot(daysToYesterday.toDouble(), totalAssetsYesterday));
-    lineSpots.add(FlSpot(daysToToday.toDouble(), totalAssets));
+    // داده برای نمودار خطی قیمت‌های نسبی
+    final priceEntries = priceProvider.prices.entries.toList();
+    final maxPrice = priceEntries.map((e) => e.value).fold(0.0, max);
+    final lineBarsData = priceEntries.map((entry) {
+      return LineChartBarData(
+        spots: [FlSpot(priceEntries.indexOf(entry).toDouble(), entry.value / maxPrice)],
+        isCurved: true,
+        color: _getColorForItem(entry.key),
+        barWidth: 2,
+        isStrokeCapRound: true,
+        dotData: FlDotData(show: false),
+        belowBarData: BarAreaData(show: false),
+      );
+    }).toList();
 
     return Scaffold(
       appBar: AppBar(title: Text('نمودارها'), centerTitle: true),
       body: ListView(
         padding: EdgeInsets.all(16),
         children: [
+          // نمودار دایره‌ای توزیع دارایی
           Text('نمودار توزیع دارایی', style: Theme.of(context).textTheme.titleMedium),
           SizedBox(height: 10),
           Container(
             height: 250,
             child: PieChart(
               PieChartData(
-                sections: pieSections,
+                sections: _buildPieSections(totalGoldValue, totalCoinRob, totalCoinNim, totalCoinTamam, totalAssets),
                 sectionsSpace: 2,
                 centerSpaceRadius: 40,
+                pieTouchData: PieTouchData(
+                  touchCallback: (FlTouchEvent event, pieTouchResponse) {},
+                ),
               ),
             ),
           ),
           SizedBox(height: 20),
 
+          // نمودار میله‌ای سود هر خرید
           Text('نمودار سود/زیان هر خرید', style: Theme.of(context).textTheme.titleMedium),
           SizedBox(height: 10),
           Container(
@@ -1369,53 +1219,114 @@ class ChartsScreen extends StatelessWidget {
           ),
           SizedBox(height: 20),
 
-          Text('روند ارزش کل دارایی', style: Theme.of(context).textTheme.titleMedium),
+          // نمودار خطی قیمت‌های نسبی
+          Text('نمودار تغییرات نسبی قیمت‌ها', style: Theme.of(context).textTheme.titleMedium),
           SizedBox(height: 10),
           Container(
             height: 200,
             child: LineChart(
               LineChartData(
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: lineSpots,
-                    isCurved: true,
-                    color: Colors.blue,
-                    barWidth: 3,
-                    isStrokeCapRound: true,
-                    dotData: FlDotData(show: true),
-                    belowBarData: BarAreaData(show: false),
-                  ),
-                ],
+                lineBarsData: lineBarsData,
                 titlesData: FlTitlesData(
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
                       getTitlesWidget: (value, meta) {
-                        if (value == 0) return Text('اولین خرید');
-                        if (value == daysToYesterday) return Text('دیروز');
-                        if (value == daysToToday) return Text('امروز');
+                        int idx = value.toInt();
+                        if (idx >= 0 && idx < priceEntries.length) {
+                          return Text(_shortName(priceEntries[idx].key), style: TextStyle(fontSize: 10));
+                        }
                         return Text('');
                       },
                     ),
                   ),
                   leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 40,
-                      getTitlesWidget: (value, meta) {
-                        return Text(NumberFormat.compact().format(value));
-                      },
-                    ),
+                    sideTitles: SideTitles(showTitles: false),
                   ),
                 ),
-                borderData: FlBorderData(show: true),
-                gridData: FlGridData(show: true),
+                borderData: FlBorderData(show: false),
+                gridData: FlGridData(show: false),
               ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  List<PieChartSectionData> _buildPieSections(
+      double gold, double rob, double nim, double tamam, double total) {
+    List<PieChartSectionData> sections = [];
+    if (gold > 0) {
+      sections.add(PieChartSectionData(
+        value: gold,
+        title: 'طلای آب شده\n${((gold / total) * 100).toStringAsFixed(1)}%',
+        color: Colors.amber,
+        radius: 50,
+      ));
+    }
+    if (rob > 0) {
+      sections.add(PieChartSectionData(
+        value: rob,
+        title: 'ربع سکه\n${((rob / total) * 100).toStringAsFixed(1)}%',
+        color: Colors.blue,
+        radius: 50,
+      ));
+    }
+    if (nim > 0) {
+      sections.add(PieChartSectionData(
+        value: nim,
+        title: 'نیم سکه\n${((nim / total) * 100).toStringAsFixed(1)}%',
+        color: Colors.green,
+        radius: 50,
+      ));
+    }
+    if (tamam > 0) {
+      sections.add(PieChartSectionData(
+        value: tamam,
+        title: 'تمام سکه\n${((tamam / total) * 100).toStringAsFixed(1)}%',
+        color: Colors.purple,
+        radius: 50,
+      ));
+    }
+    return sections;
+  }
+
+  Color _getColorForItem(String key) {
+    switch (key) {
+      case 'gold18':
+        return Colors.amber;
+      case 'gold24':
+        return Colors.orange;
+      case 'ons':
+        return Colors.yellow;
+      case 'dollar':
+        return Colors.green;
+      case 'sekke':
+        return Colors.blue;
+      case 'bahar':
+        return Colors.indigo;
+      case 'sekkenim':
+        return Colors.purple;
+      case 'sekkerob':
+        return Colors.pink;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _shortName(String key) {
+    switch (key) {
+      case 'gold18': return '18';
+      case 'gold24': return '24';
+      case 'ons': return 'اونس';
+      case 'dollar': return 'دلار';
+      case 'sekke': return 'تمام';
+      case 'sekkenim': return 'نیم';
+      case 'sekkerob': return 'ربع';
+      case 'bahar': return 'قدیم';
+      default: return '';
+    }
   }
 }
 
@@ -1457,9 +1368,9 @@ class SettingsScreen extends StatelessWidget {
                   Text('فاصله به‌روزرسانی خودکار (ثانیه)', style: Theme.of(context).textTheme.titleSmall),
                   Slider(
                     value: settings.autoUpdateInterval.toDouble(),
-                    min: 30, // حداقل ۳۰ ثانیه
-                    max: 600, // حداکثر ۶۰۰ ثانیه
-                    divisions: (600 - 30) ~/ 10, // تقریبا 57 قسمت
+                    min: 60,
+                    max: 3600,
+                    divisions: 59,
                     label: settings.autoUpdateInterval.toString(),
                     onChanged: (v) {
                       settings.setAutoUpdateInterval(v.toInt());
@@ -1494,6 +1405,7 @@ class SettingsScreen extends StatelessWidget {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Hive initialization
   final appDocumentDir = await path_provider.getApplicationDocumentsDirectory();
   Hive.init(appDocumentDir.path);
   Hive.registerAdapter(GoldTransactionAdapter());
