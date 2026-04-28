@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:hive/hive.dart';
 import 'package:path_provider/path_provider.dart' as path_provider;
+import 'package:html/parser.dart' as html_parser;   // اضافه‌شده برای اسکرپ
 
 // -------------------- Models --------------------
 part 'main.g.dart'; // برای Hive
@@ -68,7 +69,7 @@ class CoinTransaction extends HiveObject {
   });
 }
 
-// -------------------- مدل پاسخ API --------------------
+// -------------------- مدل پاسخ (بدون تغییر) --------------------
 class PriceResponse {
   final String name;
   final double? currentPrice;
@@ -114,46 +115,146 @@ class Change {
   }
 }
 
-// -------------------- API Service (تطبیق با API جدید) --------------------
+// -------------------- API Service (اسکرپ مستقیم) --------------------
 class ApiService {
-  static const String baseUrl = 'https://tweeter.runflare.run/price/';
+  static const String _pageUrl = 'https://www.estjt.ir/price/';
 
-  static Future<PriceResponse?> fetchPrice(String obj) async {
-    try {
-      final response = await http.get(Uri.parse('$baseUrl$obj'));
-      if (response.statusCode == 200) {
-        final jsonData = jsonDecode(response.body);
-        return PriceResponse.fromJson(jsonData);
+  /// نگاشت نام‌های فارسی به کلیدهای برنامه
+  static const Map<String, String> _nameToKey = {
+    'انس طلا': 'gold_ons',
+    'مظنه تهران': 'gold_mazneh',
+    'طلای ۱۸ عیار': 'gold_18',
+    'طلای ۲۴ عیار': 'gold_24',
+    'سکه طرح قدیم': 'coin_old',
+    'سکه طرح جدید': 'coin_new',
+    'نیم سکه': 'coin_half',
+    'ربع سکه': 'coin_quarter',
+    'سکه یک گرمی': 'coin_1g',
+  };
+
+  /// تبدیل ارقام فارسی/عربی به انگلیسی
+  static String _persianToEnglish(String s) {
+    const persianDigits = '۰۱۲۳۴۵۶۷۸۹';
+    const englishDigits = '0123456789';
+    final result = StringBuffer();
+    for (final ch in s.runes) {
+      final char = String.fromCharCode(ch);
+      final idx = persianDigits.indexOf(char);
+      if (idx != -1) {
+        result.write(englishDigits[idx]);
+      } else {
+        result.write(char);
       }
-    } catch (e) {
-      print('Error fetching $obj: $e');
+    }
+    return result.toString();
+  }
+
+  /// تبدیل متن قیمت به double? (null در صورت '—')
+  static double? _parsePrice(String text) {
+    if (text.trim() == '—') return null;
+    final cleaned = _persianToEnglish(text).replaceAll(RegExp(r'[^\d.]'), '');
+    if (cleaned.isEmpty) return null;
+    return double.tryParse(cleaned);
+  }
+
+  /// استخراج مقدار و درصد تغییر از متنی مانند "۴۷۸.۷۹۶ (۲.۵۱)"
+  static Map<String, double?>? _parseChange(String changeText) {
+    final text = _persianToEnglish(changeText);
+    final match = RegExp(r'([\d.]+)\s*\(([\d.]+)\)').firstMatch(text);
+    if (match != null) {
+      final value = double.tryParse(match.group(1)!);
+      final percent = double.tryParse(match.group(2)!);
+      return {'value': value, 'percent': percent};
     }
     return null;
   }
 
-  // دریافت همه قیمت‌های مورد نیاز
+  /// دریافت و پارس کل قیمت‌ها از وب‌سایت اتحادیه
   static Future<Map<String, PriceResponse>> fetchAllPrices() async {
-    final types = [
-      'gold_18',
-      'gold_24',
-      'gold_ons',
-      'gold_mazneh',
-      'coin_old',
-      'coin_new',
-      'coin_half',
-      'coin_quarter',
-      'coin_1g'
-    ];
-    Map<String, PriceResponse> prices = {};
-    for (String type in types) {
-      final response = await fetchPrice(type);
-      if (response != null) prices[type] = response;
+    try {
+      final response = await http.get(
+        Uri.parse(_pageUrl),
+        headers: {
+          'User-Agent':
+              'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+          'Accept':
+              'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+        },
+      );
+
+      if (response.statusCode != 200) {
+        print('Error fetching page: ${response.statusCode}');
+        return {};
+      }
+
+      final document = html_parser.parse(response.body);
+      final rows = document.querySelectorAll('div.price-box table tbody tr');
+      final Map<String, PriceResponse> prices = {};
+
+      for (final row in rows) {
+        final cells = row.querySelectorAll('td');
+        if (cells.length < 6) continue;
+
+        final name = cells[0].text.trim();
+        final key = _nameToKey[name];
+        if (key == null) continue;
+
+        // قیمت‌های اصلی
+        var current = _parsePrice(cells[1].text.trim());
+        var high = _parsePrice(cells[2].text.trim());
+        var low = _parsePrice(cells[3].text.trim());
+        var yesterdayAvg = _parsePrice(cells[4].text.trim());
+
+        // اطلاعات تغییر
+        String? direction;
+        double? changeVal;
+        double? changePercent;
+        final changeSpan = cells[5].querySelector('span');
+        if (changeSpan != null) {
+          if (changeSpan.classes.contains('asc')) {
+            direction = 'up';
+          } else if (changeSpan.classes.contains('desc')) {
+            direction = 'down';
+          }
+          final changeData = _parseChange(changeSpan.text.trim());
+          if (changeData != null) {
+            changeVal = changeData['value'];
+            changePercent = changeData['percent'];
+          }
+        }
+
+        // تبدیل تومان به ریال (به جز انس طلا)
+        if (key != 'gold_ons') {
+          current = current != null ? current * 10 : null;
+          high = high != null ? high * 10 : null;
+          low = low != null ? low * 10 : null;
+          yesterdayAvg = yesterdayAvg != null ? yesterdayAvg * 10 : null;
+          changeVal = changeVal != null ? changeVal * 10 : null;
+        }
+
+        prices[key] = PriceResponse(
+          name: name,
+          currentPrice: current,
+          high: high,
+          low: low,
+          yesterdayAvg: yesterdayAvg,
+          change: Change(
+            value: changeVal,
+            percent: changePercent,
+            direction: direction,
+          ),
+        );
+      }
+      return prices;
+    } catch (e) {
+      print('Scraping error: $e');
+      return {};
     }
-    return prices;
   }
 }
 
-// -------------------- Providers --------------------
+// -------------------- Providers (بدون تغییر) --------------------
 class PriceProvider extends ChangeNotifier {
   Map<String, PriceResponse> _prices = {};
   Map<String, PriceResponse> _lastSavedPrices = {};
@@ -585,7 +686,7 @@ class HomeScreen extends StatelessWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
-                        _buildSummaryItem(context, 'طلای آب شده', NumberFormat('#,###').format(totalGoldValue), Colors.blue), // رنگ آبی
+                        _buildSummaryItem(context, 'طلای آب شده', NumberFormat('#,###').format(totalGoldValue), Colors.blue),
                         _buildSummaryItem(context, 'سکه', NumberFormat('#,###').format(totalCoinValue), Colors.blue),
                       ],
                     ),
@@ -724,7 +825,6 @@ class GoldListScreen extends StatelessWidget {
               children: [
                 Expanded(child: _buildSummaryCard('وزن کل', '${totalWeight.toStringAsFixed(3)} گرم', Colors.blue)),
                 Expanded(child: _buildSummaryCard('مبلغ پرداختی', NumberFormat('#,###').format(totalPaid), Colors.blue)),
-                //Expanded(child: _buildSummaryCard('سود خالص', NumberFormat('#,###').format(totalProfit), totalProfit >= 0 ? Colors.green : Colors.red)),
               ],
             ),
           ),
@@ -1205,7 +1305,7 @@ class ChartsScreen extends StatelessWidget {
       pieSections.add(PieChartSectionData(
         value: totalGoldValue,
         title: 'طلای آب شده\n${((totalGoldValue / totalAssets) * 100).toStringAsFixed(1)}%',
-        color: Colors.blue, // رنگ آبی برای طلا
+        color: Colors.blue,
         radius: 50,
       ));
     }
@@ -1282,8 +1382,7 @@ class ChartsScreen extends StatelessWidget {
       );
     }
 
-    // --- نمودار روند ارزش کل دارایی (با استفاده از قیمت دیروز و امروز و اولین خرید) ---
-    // محاسبه ارزش کل با قیمت دیروز (yesterday_avg)
+    // --- نمودار روند ارزش کل دارایی ---
     double totalAssetsYesterday = 0;
     for (var g in goldList) {
       final yesterdayPrice = priceProvider.prices[g.type]?.yesterdayAvg ?? 0;
@@ -1294,25 +1393,15 @@ class ChartsScreen extends StatelessWidget {
       totalAssetsYesterday += yesterdayPrice * c.count;
     }
 
-    // ارزش کل در تاریخ اولین خرید (با فرض اینکه اولین خرید قدیمی‌ترین تاریخ باشد)
     DateTime firstPurchaseDate = DateTime.now();
     double firstPurchaseTotal = 0;
-    // پیدا کردن اولین تاریخ
     for (var g in goldList) {
       if (g.purchaseDate.isBefore(firstPurchaseDate)) firstPurchaseDate = g.purchaseDate;
     }
     for (var c in coinList) {
       if (c.purchaseDate.isBefore(firstPurchaseDate)) firstPurchaseDate = c.purchaseDate;
     }
-    // محاسبه مجموع مبالغ پرداختی در آن تاریخ (فقط خریدهایی که در آن تاریخ یا قبل از آن انجام شده)
-    // ساده‌سازی: از تمام خریدها استفاده می‌کنیم چون خریدهای بعد از آن تاریخ در آن زمان وجود نداشته‌اند.
-    // در این نسخه ساده، فرض می‌کنیم که اولین خرید تنها خرید در آن تاریخ است.
-    // برای دقیق‌تر شدن، می‌توانیم فقط خریدهایی را در نظر بگیریم که در آن تاریخ یا قبل از آن هستند.
-    // اما برای سادگی، از مجموع کل مبالغ پرداختی استفاده می‌کنیم (که با واقعیت تطابق ندارد).
-    // بهتر است از مجموع مبالغ پرداختی همان خریدهای قبل از آن تاریخ استفاده کنیم.
-    // ما اینجا یک پیاده‌سازی ساده انجام می‌دهیم: از اولین خرید به عنوان یک نقطه استفاده می‌کنیم.
-    // ارزش آن خرید در آن تاریخ = مبلغ پرداختی آن خرید (چون قیمت همان لحظه را ندارد)
-    // اما اگر چند خرید در آن تاریخ باشند، مجموع مبالغ پرداختی آنها.
+
     double firstPurchaseValue = 0;
     for (var g in goldList) {
       if (g.purchaseDate == firstPurchaseDate) {
@@ -1325,10 +1414,8 @@ class ChartsScreen extends StatelessWidget {
       }
     }
 
-    // ایجاد نقاط برای نمودار خطی (سه نقطه)
     List<FlSpot> lineSpots = [];
-    lineSpots.add(FlSpot(0, firstPurchaseValue)); // نقطه اول (روز 0 = اولین خرید)
-    // محاسبه فاصله روزها از اولین خرید تا دیروز و امروز
+    lineSpots.add(FlSpot(0, firstPurchaseValue));
     int daysToYesterday = Calculator.daysBetween(firstPurchaseDate, DateTime.now().subtract(Duration(days: 1)));
     int daysToToday = Calculator.daysBetween(firstPurchaseDate, DateTime.now());
     lineSpots.add(FlSpot(daysToYesterday.toDouble(), totalAssetsYesterday));
@@ -1352,7 +1439,6 @@ class ChartsScreen extends StatelessWidget {
             ),
           ),
           SizedBox(height: 20),
-
           Text('نمودار سود/زیان هر خرید', style: Theme.of(context).textTheme.titleMedium),
           SizedBox(height: 10),
           Container(
@@ -1367,7 +1453,6 @@ class ChartsScreen extends StatelessWidget {
             ),
           ),
           SizedBox(height: 20),
-
           Text('روند ارزش کل دارایی', style: Theme.of(context).textTheme.titleMedium),
           SizedBox(height: 10),
           Container(
@@ -1456,9 +1541,9 @@ class SettingsScreen extends StatelessWidget {
                   Text('فاصله به‌روزرسانی خودکار (ثانیه)', style: Theme.of(context).textTheme.titleSmall),
                   Slider(
                     value: settings.autoUpdateInterval.toDouble(),
-                    min: 30, // حداقل ۳۰ ثانیه
-                    max: 600, // حداکثر ۶۰۰ ثانیه
-                    divisions: (600 - 30) ~/ 10, // تقریبا 57 قسمت
+                    min: 30,
+                    max: 600,
+                    divisions: (600 - 30) ~/ 10,
                     label: settings.autoUpdateInterval.toString(),
                     onChanged: (v) {
                       settings.setAutoUpdateInterval(v.toInt());
